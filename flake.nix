@@ -33,6 +33,7 @@
               openocd-rp2040
               probe-rs-tools
               just  
+              lldb
               # pre-commit
               # rustPackages.clippy
             ] ++ (systemBuildInputs system pkgs);

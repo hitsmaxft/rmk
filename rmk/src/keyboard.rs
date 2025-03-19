@@ -374,7 +374,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
      * release hold key
      */
     async fn release_key_action(&mut self, hold_action: Action, tap_action: Action, key_event_released: KeyEvent) {
-        warn!("release key {:?}] ", key_event_released);
+        debug!("Releasing key {:?}] ", key_event_released);
 
         // hanlding hold key release
 
@@ -390,13 +390,14 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
 
         //release same key
         if self.unreleased_events.len() == 0 {
-            return;
+            warn!("unreleased_events is empty");
         } else {
             //check if any key is held for too long
             for i in 0..self.unreleased_events.len() {
                 let key_event = self.unreleased_events[i].key_event;
                 if key_event.col == key_event_released.col && key_event.row == key_event_released.row {
                     //release self
+                    debug!("Drop unreleased key {:?}] from unreleased_events, idx: {}", key_event_released, i);
                     self.unreleased_events.remove(i);
                     break;
                 }
@@ -468,10 +469,9 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                     self.process_key_action_normal(action, key_event).await;
 
                     //release timer
-                    if let Some(_) = self.timer[key_event.col as usize][key_event.row as usize] {
-                        self.timer[key_event.col as usize][key_event.row as usize] = None;
-                    }   
-                    self.unreleased_events.remove(i);
+                    //if let Some(_) = self.timer[key_event.col as usize][key_event.row as usize] {
+                    //    self.timer[key_event.col as usize][key_event.row as usize] = None;
+                    //}   
                 }
             }
         }
@@ -634,7 +634,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
             self.timer[col][row] = Some(pressedKeyEvent.pressed_time);
 
             //save key for multiple press
-            debug!("save pressed key: {:?}, {:?}", hold_action, key_event);
+            debug!("Save pressed key: {:?}, {:?}", hold_action, key_event);
             self.unreleased_events.push(pressedKeyEvent).ok();
 
             let hold_timeout = embassy_time::Timer::after_millis(
@@ -661,7 +661,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                         // If it's same key event and releasing within `hold_timeout`, trigger tap
                         if !e.pressed {
                             let elapsed = self.timer[col][row].unwrap().elapsed().as_millis();
-                            debug!("TAP action: {:?}, time elapsed: {}ms", tap_action, elapsed);
+                            debug!("TAP action: {:?}, time elapsed: {} ms", tap_action, elapsed);
                             self.process_key_action_tap(tap_action, key_event).await;
 
                             // Clear timer
@@ -1268,7 +1268,9 @@ mod test {
     use crate::action::KeyAction;
     use crate::{a, k, layer, mo};
     use embassy_futures::block_on;
+    use futures::join;
     use embassy_time::{Duration, Timer};
+    use futures::FutureExt;
 
     // Init logger for tests
     #[ctor::ctor]
@@ -1359,20 +1361,36 @@ mod test {
 
     #[test]
     fn test_tap_hold_key() {
+
         let main = async {
             let mut keyboard = create_test_keyboard();
             let tap_hold_action =
                 KeyAction::TapHold(Action::Key(KeyCode::A), Action::Key(KeyCode::LShift));
 
             // Tap
-            keyboard
+            let hold_shift =keyboard
                 .process_key_action(tap_hold_action.clone(), key_event(2, 1, true))
-                .await;
-            Timer::after(Duration::from_millis(10)).await;
+                ;
+
+            join!(
+                Timer::after(Duration::from_millis(10)).then( |_ | async {
+                //send release event
+                KEY_EVENT_CHANNEL.send(key_event(2, 1, false)).await;
+                }),
+            hold_shift
+            );    
+
+            match KEYBOARD_REPORT_CHANNEL.receive().await {
+                Report::KeyboardReport(report) => 
+                    assert_eq!(report.keycodes[0], 0x4),  // A should be released
+                _ => panic!("Expected a KeyboardReport, but received a different report type"),
+            };
+
+            // a released
             keyboard
                 .process_key_action(tap_hold_action.clone(), key_event(2, 1, false))
                 .await;
-            assert_eq!(keyboard.report.keycodes[0], 0x00); // A should be released
+
 
             // Hold
             keyboard
