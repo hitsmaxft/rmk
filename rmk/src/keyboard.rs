@@ -1,4 +1,4 @@
-use crate::{action, boot};
+use crate::boot;
 use crate::channel::{KEYBOARD_REPORT_CHANNEL, KEY_EVENT_CHANNEL};
 use crate::combo::{Combo, COMBO_MAX_LENGTH};
 use crate::config::BehaviorConfig;
@@ -373,11 +373,13 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
     /*
      * release hold key
      */
-    async fn release_key_action(&mut self, hold_action: Action, key_event_released: KeyEvent) {
+    async fn release_key_action(&mut self, hold_action: Action, tap_action: Action, key_event_released: KeyEvent) {
+        warn!("release key {:?}] ", key_event_released);
 
         // hanlding hold key release
 
         if key_event_released.pressed {
+            warn!("release key action with pressed key, should never happen");
             //never call this while press8ng key
             return;
         }
@@ -632,6 +634,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
             self.timer[col][row] = Some(pressedKeyEvent.pressed_time);
 
             //save key for multiple press
+            debug!("save pressed key: {:?}, {:?}", hold_action, key_event);
             self.unreleased_events.push(pressedKeyEvent).ok();
 
             let hold_timeout = embassy_time::Timer::after_millis(
@@ -664,6 +667,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                             // Clear timer
                             self.timer[col][row] = None;
                         } else {
+                            debug!("UNKNOWN release action: {:?}, ignored", tap_action);
                             //TODO ignore pressed again, should never happen
                         }
                     } else {
@@ -715,7 +719,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
         } else {
             // Release
 
-
             // find holding_after_tap key_event
             if let Some(index) = self.hold_after_tap.iter().position(|&k| {
                 if let Some(ke) = k {
@@ -731,7 +734,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
             }
 
             //check unreleased event and remove key with same rol and col
-            self.release_key_action(hold_action, key_event).await;
+            self.release_key_action(hold_action, tap_action, key_event).await;
 
         }
     }
