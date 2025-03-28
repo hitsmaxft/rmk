@@ -1,4 +1,4 @@
-use crate::{boot};
+use crate::boot;
 use crate::channel::{KEYBOARD_REPORT_CHANNEL, KEY_EVENT_CHANNEL};
 use crate::combo::{Combo, COMBO_MAX_LENGTH};
 use crate::config::BehaviorConfig;
@@ -18,7 +18,6 @@ use embassy_futures::{select::select, yield_now};
 use embassy_time::{Instant, Timer};
 use heapless::{Deque, FnvIndexMap, Vec};
 use usbd_hid::descriptor::{MediaKeyboardReport, MouseReport, SystemControlReport};
-use core::sync::atomic::{AtomicBool, Ordering};
 
 /// State machine for one shot keys
 #[derive(Default)]
@@ -131,6 +130,7 @@ pub struct Keyboard<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usi
 
     /// Used for temporarily disabling combos
     combo_on: bool,
+
 }
 
 impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
@@ -266,7 +266,11 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
     async fn process_key_action(&mut self, key_action: KeyAction, key_event: KeyEvent) {
         match key_action {
             KeyAction::No | KeyAction::Transparent => (),
-            KeyAction::Single(a) => self.process_key_action_normal(a, key_event).await,
+            KeyAction::Single(a) =>  { 
+                debug!("Process Single key action: {:?}, {:?}", a, key_event);
+                self.process_key_action_unreleased(key_event).await;
+                self.process_key_action_normal(a, key_event).await;
+            }
             KeyAction::WithModifier(a, m) => {
                 self.process_key_action_with_modifier(a, m, key_event).await
             }
@@ -474,10 +478,12 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
             }
         }
     }
-    async fn process_key_action_unreleased(&mut self) {
+    async fn process_key_action_unreleased(&mut self, key_event: KeyEvent) {
         if self.unreleased_events.len() == 0 {
+            debug!("No unreleased events");
             return;
         } else {
+            debug!("releasing events");
             //check if any key is held for too long
 
             let now = Instant::now();
@@ -489,6 +495,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                 if now - pressed_time > timeout {
                     //trigger hold timer
                     //TODO trigger hold
+                    debug!("Trigger unreleased key as hold: {:?}, {:?}", action, key_event);
                     self.process_key_action_normal(action, key_event).await;
 
                     //release timer
@@ -675,13 +682,13 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                 embassy_futures::select::Either::First(_) => {
                     // Timeout, trigger hold
                     debug!("Hold timeout, got HOLD: {:?}, {:?}", hold_action, key_event);
-                    self.process_key_action_unreleased().await;
+                    self.process_key_action_unreleased(key_event).await;
 
                     self.process_key_action_normal(hold_action, key_event).await;
                 }
                 embassy_futures::select::Either::Second(e) => {
                     //raise hold timeout keys
-                    self.process_key_action_unreleased().await;
+                    self.process_key_action_unreleased(key_event).await;
 
                     if e.row == key_event.row && e.col == key_event.col {
                         // If it's same key event and releasing within `hold_timeout`, trigger tap
@@ -1354,16 +1361,18 @@ mod test {
             },
             // Verify reports
             async {
-                for expected in expected_reports {
+                for i in 0..expected_reports.len() {
+                    let expected = expected_reports.get(i).unwrap().clone();
                     match KEYBOARD_REPORT_CHANNEL.receive().await {
                         Report::KeyboardReport(report) => {
+                            println!("Received expected key report: {:?}", report);
                             assert_eq!(
                                 report, expected,
-                                "Expected {:?} but actually {:?}", 
+                                "Expected {}th {:?} but actually {:?}", 
+                                i,
                                 expected, report
                             );
 
-                            println!("Received expected key report: {:?}", report);
                         }
                         _ => panic!("Expected a KeyboardReport"),
                     }
@@ -1375,6 +1384,7 @@ mod test {
         
         // Reset the done flag for next test
         *REPORTS_DONE.lock().await = false;
+
     }
 
     macro_rules! key_sequence {
@@ -1462,12 +1472,18 @@ mod test {
     }
 
     fn create_test_keyboard() -> Keyboard<'static, 5, 14, 2> {
+        create_test_keyboard_combo(false)
+    }
+    fn create_test_keyboard_combo(with_combo:bool) -> Keyboard<'static, 5, 14, 2> {
         // Box::leak is acceptable in tests
         let keymap = Box::new(get_keymap());
         let leaked_keymap = Box::leak(keymap);
 
         let behaviorConfig = BehaviorConfig { 
-            combo : get_combos_config(),
+            combo : match with_combo {
+                false => CombosConfig::default(),
+                _ => get_combos_config(),
+            },
             .. Default::default()
         };
         
@@ -1551,58 +1567,25 @@ mod test {
         let main = async {
             let mut keyboard = create_test_keyboard();
 
-            let main_loop = async {
-                select(keyboard.run(),
-                async {
-                    println!("verify keycodes");
-                        match KEYBOARD_REPORT_CHANNEL.receive().await {
-                            Report::KeyboardReport(report) => 
-                            {
-                                debug!("got report {:?}", report);
-                                assert_eq!(report.modifier, 0x2); // A should be released
-                            }
-                            _ => panic!("Expected a KeyboardReport, but received a different report type"),
-                        };
-                        match KEYBOARD_REPORT_CHANNEL.receive().await {
-                            Report::KeyboardReport(report) => 
-                            {
-                                debug!("got report {:?}", report);
-                                assert_eq!(report.modifier, 0x2); // A should be released
-                            }
-                            _ => panic!("Expected a KeyboardReport, but received a different report type"),
-                        };
-                        match KEYBOARD_REPORT_CHANNEL.receive().await {
-                            Report::KeyboardReport(report) => 
-                            {
-                                debug!("got report {:?}", report);
-                                assert_eq!(report.modifier, 0x2); // A should be released
-                            }
-                            _ => panic!("Expected a KeyboardReport, but received a different report type"),
-                        };
-                }
-            ).await;
-            };
-            let sender = async {
-                    println!("sending keys");
 
-                    Timer::after(Duration::from_millis(10)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 1, true)).await;
-                    Timer::after(Duration::from_millis(50)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 2, true)).await;
-                    Timer::after(Duration::from_millis(110)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 3, true)).await;
-                    Timer::after(Duration::from_millis(20)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 3, false)).await;
-                    Timer::after(Duration::from_millis(70)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 1, false)).await;
-                    Timer::after(Duration::from_millis(20)).await;
-                    KEY_EVENT_CHANNEL.send(key_event(2, 2, false)).await;
-                    Timer::after(Duration::from_millis(100)).await;
-            };
+            let sequence = key_sequence![
+                [2, 1, true, 10],  // Press TH A shift 
+                [2, 2, true, 100], //  press th s lgui
+                //hold timeout
+                [2, 3, true, 270], //  press d
+                [2, 3, false, 290], // release d
+                [2, 1, false, 380], // Release A
+                [2, 2, false, 400], // Release s
+            ];
+            let expected_reports = key_report![
+                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]], //shift
+                [KC_LSHIFT, [KeyCode::D as u8, 0, 0, 0, 0, 0]], //shift
+                [KC_LSHIFT| KC_LGUI, [KeyCode::D as u8, 0, 0, 0, 0, 0]], // 0x7
+                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]], //shift and gui
+                [2, [0, 0, 0, 0, 0, 0]],
+            ];
 
-            join!( main_loop, sender);    
-
-
+            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
         };
         block_on(main);
     }
@@ -1699,7 +1682,7 @@ mod test {
     #[test]
     fn test_combo_with_mod_then_mod_timeout() {
         let main = async {
-            let mut keyboard = create_test_keyboard();
+            let mut keyboard = create_test_keyboard_combo(true);
             
             let sequence = key_sequence![
                 [3, 4, true,  10],  // Press V
@@ -1725,11 +1708,12 @@ mod test {
     }
 
     const KC_LSHIFT:u8  = 1 << 1;
+    const KC_LGUI:u8  = 1 << 3;
 
     #[test]
     fn test_combo_with_mod() {
         let main = async {
-            let mut keyboard = create_test_keyboard();
+            let mut keyboard = create_test_keyboard_combo(true);
             
             let sequence = key_sequence![
                 [3, 4, true,  10],  // Press V

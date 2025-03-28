@@ -132,6 +132,7 @@ pub struct TapHoldConfig {
     pub prior_idle_time: Duration,
     pub post_wait_time: Duration,
     pub hold_timeout: Duration,
+    pub permissive_hold: bool,
 }
 
 impl Default for TapHoldConfig {
@@ -141,6 +142,7 @@ impl Default for TapHoldConfig {
             prior_idle_time: Duration::from_millis(120),
             post_wait_time: Duration::from_millis(50),
             hold_timeout: Duration::from_millis(250),
+            permissive_hold: true,
         }
     }
 }
