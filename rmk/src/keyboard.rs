@@ -200,6 +200,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
 
         if self.combo_on {
             if let Some(key_action) = self.process_combo(key_action, key_event).await {
+                debug!("Process key action after combo: {:?}, {:?}", key_action, key_event);
                 self.process_key_action(key_action, key_event).await;
             }
         } else {
@@ -325,15 +326,18 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
                 error!("Combo actions buffer overflowed! This is a bug and should not happen!");
             }
 
+            //FIXME last combo is not checked
             let next_action = self
                 .keymap
                 .borrow_mut()
                 .combos
-                .iter()
-                .find_map(|combo| combo.done().then_some(combo.output));
+                .iter_mut()
+                .find_map(|combo | (combo.satisfy() && !combo.done()).then_some(combo.mark_done()))
+                ;
 
             if next_action.is_some() {
                 self.combo_actions_buffer.clear();
+                debug!("Combo action {:?} matched:: clearing combo buffer", next_action);
             } else {
                 let timeout =
                     embassy_time::Timer::after(self.keymap.borrow().behavior.combo.timeout);
@@ -362,6 +366,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize>
 
     async fn dispatch_combos(&mut self) {
         while let Some((action, event)) = self.combo_actions_buffer.pop_front() {
+            debug!("Dispatching combo action: {:?}", action);
             self.process_key_action(action, event).await;
         }
 
@@ -1354,9 +1359,11 @@ mod test {
                         Report::KeyboardReport(report) => {
                             assert_eq!(
                                 report, expected,
-                                "Expected report {:?} but got {:?}", 
+                                "Expected {:?} but actually {:?}", 
                                 expected, report
                             );
+
+                            println!("Received expected key report: {:?}", report);
                         }
                         _ => panic!("Expected a KeyboardReport"),
                     }
@@ -1443,7 +1450,11 @@ mod test {
                     Combo::new([
                         k!(V), //3,4
                         k!(B), //3,5
-                    ].to_vec(), k!(LShift), Some(0))
+                    ].to_vec(), k!(LShift), Some(0)),
+                    Combo::new([
+                        k!(R), //1,4
+                        k!(T), //1,5
+                    ].to_vec(), k!(LAlt), Some(0)),
             ])
             ,
             timeout: Duration::from_millis(100),
@@ -1685,7 +1696,37 @@ mod test {
         block_on(main);
     }
 
-        #[test]
+    #[test]
+    fn test_combo_with_mod_then_mod_timeout() {
+        let main = async {
+            let mut keyboard = create_test_keyboard();
+            
+            let sequence = key_sequence![
+                [3, 4, true,  10],  // Press V
+                [3, 5, true,  10],  // Press B
+
+                [1, 4, true,  50],  // Press R
+                [1, 4, false, 90],  // Release R
+                [3, 4, false, 150], // Release V
+                [3, 5, false, 170], // Release B
+            ];
+
+            let expected_reports = key_report![
+                [KC_LSHIFT, [0; 6]],
+                [KC_LSHIFT, [KeyCode::R as u8, 0, 0, 0, 0, 0]],
+                [KC_LSHIFT, [0; 6]],
+                [0, [0; 6]],
+            ];
+
+            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
+        };
+        
+        block_on(main);
+    }
+
+    const KC_LSHIFT:u8  = 1 << 1;
+
+    #[test]
     fn test_combo_with_mod() {
         let main = async {
             let mut keyboard = create_test_keyboard();
@@ -1700,9 +1741,9 @@ mod test {
             ];
 
             let expected_reports = key_report![
-                [1 << 1 , [0; 6]],
-                [1 << 1, [KeyCode::N as u8, 0, 0, 0, 0, 0]],
-                [1 << 1, [0; 6]],
+                [KC_LSHIFT , [0; 6]],
+                [KC_LSHIFT, [KeyCode::N as u8, 0, 0, 0, 0, 0]],
+                [KC_LSHIFT, [0; 6]],
                 [0, [0; 6]],
             ];
 
