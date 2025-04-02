@@ -1,16 +1,18 @@
 use core::cell::RefCell;
 
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use num_enum::FromPrimitive;
 
+use crate::action::KeyAction;
+use crate::combo::{Combo, COMBO_MAX_NUM};
+use crate::keymap::KeyMap;
+use crate::usb::descriptor::ViaReport;
+use crate::via::keycode_convert::{from_via_keycode, to_via_keycode};
+#[cfg(feature = "storage")]
 use crate::{
-    action::KeyAction,
     channel::FLASH_CHANNEL,
-    combo::{Combo, COMBO_MAX_LENGTH, COMBO_MAX_NUM},
-    keymap::KeyMap,
+    combo::COMBO_MAX_LENGTH,
     storage::{ComboData, FlashOperationMessage},
-    usb::descriptor::ViaReport,
-    via::keycode_convert::{from_via_keycode, to_via_keycode},
 };
 
 /// Vial communication commands. Check [vial-qmk/quantum/vial.h`](https://github.com/vial-kb/vial-qmk/blob/20d61fcb373354dc17d6ecad8f8176be469743da/quantum/vial.h#L36)
@@ -56,11 +58,16 @@ const VIAL_EP_SIZE: usize = 32;
 const VIAL_COMBO_MAX_LENGTH: usize = 4;
 
 /// Note: vial uses little endian, while via uses big endian
-pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_LAYER: usize>(
+pub(crate) async fn process_vial<
+    const ROW: usize,
+    const COL: usize,
+    const NUM_LAYER: usize,
+    const NUM_ENCODER: usize,
+>(
     report: &mut ViaReport,
     vial_keyboard_Id: &[u8],
     vial_keyboard_def: &[u8],
-    keymap: &RefCell<KeyMap<'_, ROW, COL, NUM_LAYER>>,
+    keymap: &RefCell<KeyMap<'_, ROW, COL, NUM_LAYER, NUM_ENCODER>>,
 ) {
     // report.output_data[0] == 0xFE -> vial commands
     let vial_command = VialCommand::from_primitive(report.output_data[1]);
@@ -87,12 +94,9 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
             if end > vial_keyboard_def.len() {
                 end = vial_keyboard_def.len();
             }
-            vial_keyboard_def[start..end]
-                .iter()
-                .enumerate()
-                .for_each(|(i, v)| {
-                    report.input_data[i] = *v;
-                });
+            vial_keyboard_def[start..end].iter().enumerate().for_each(|(i, v)| {
+                report.input_data[i] = *v;
+            });
             debug!(
                 "Vial return: page:{} start:{} end: {}, data: {:?}",
                 page, start, end, report.input_data
@@ -143,8 +147,7 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
                             );
                         }
                         LittleEndian::write_u16(
-                            &mut report.input_data
-                                [1 + VIAL_COMBO_MAX_LENGTH * 2..3 + VIAL_COMBO_MAX_LENGTH * 2],
+                            &mut report.input_data[1 + VIAL_COMBO_MAX_LENGTH * 2..3 + VIAL_COMBO_MAX_LENGTH * 2],
                             to_via_keycode(combo.output),
                         );
                     } else {
@@ -155,6 +158,7 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
                     debug!("DynamicEntryOp - DynamicVialComboSet");
                     report.input_data[0] = 0; // Index 0 is the return code, 0 means success
 
+                    #[cfg(feature = "storage")]
                     let (real_idx, actions, output) = {
                         // Drop combos to release the borrowed keymap, avoid potential run-time panics
                         let combo_idx = report.output_data[3] as usize;
@@ -166,9 +170,8 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
                         let mut actions = [KeyAction::No; COMBO_MAX_LENGTH];
                         let mut n: usize = 0;
                         for i in 0..VIAL_COMBO_MAX_LENGTH {
-                            let action = from_via_keycode(LittleEndian::read_u16(
-                                &report.output_data[4 + i * 2..6 + i * 2],
-                            ));
+                            let action =
+                                from_via_keycode(LittleEndian::read_u16(&report.output_data[4 + i * 2..6 + i * 2]));
                             if action != KeyAction::No {
                                 if n >= COMBO_MAX_LENGTH {
                                     //fail if the combo action buffer is too small
@@ -179,8 +182,7 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
                             }
                         }
                         let output = from_via_keycode(LittleEndian::read_u16(
-                            &report.output_data
-                                [4 + VIAL_COMBO_MAX_LENGTH * 2..6 + VIAL_COMBO_MAX_LENGTH * 2],
+                            &report.output_data[4 + VIAL_COMBO_MAX_LENGTH * 2..6 + VIAL_COMBO_MAX_LENGTH * 2],
                         ));
 
                         combo.actions.clear();
@@ -189,6 +191,7 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
 
                         (real_idx, actions, output)
                     };
+                    #[cfg(feature = "storage")]
                     FLASH_CHANNEL
                         .send(FlashOperationMessage::WriteCombo(ComboData {
                             idx: real_idx,
@@ -214,22 +217,20 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
         VialCommand::GetEncoder => {
             let layer = report.output_data[2];
             let index = report.output_data[3];
-            debug!(
-                "Received Vial - GetEncoder, encoder idx: {} at layer: {}",
-                index, layer
-            );
+            debug!("Received Vial - GetEncoder, encoder idx: {} at layer: {}", index, layer);
+
             // Get encoder value
-            // if let Some(encoders) = &keymap.borrow().encoders {
-            //     if let Some(encoder_layer) = encoders.get(layer as usize) {
-            //         if let Some(encoder) = encoder_layer.get(index as usize) {
-            //             let clockwise = to_via_keycode(encoder.0);
-            //             BigEndian::write_u16(&mut report.input_data[0..2], clockwise);
-            //             let counter_clockwise = to_via_keycode(encoder.1);
-            //             BigEndian::write_u16(&mut report.input_data[2..4], counter_clockwise);
-            //             return;
-            //         }
-            //     }
-            // }
+            if let Some(encoder_map) = &keymap.borrow().encoders {
+                if let Some(encoder_layer) = encoder_map.get(layer as usize) {
+                    if let Some(encoder) = encoder_layer.get(index as usize) {
+                        let clockwise = to_via_keycode(encoder.clockwise());
+                        BigEndian::write_u16(&mut report.input_data[0..2], clockwise);
+                        let counter_clockwise = to_via_keycode(encoder.counter_clockwise());
+                        BigEndian::write_u16(&mut report.input_data[2..4], counter_clockwise);
+                        return;
+                    }
+                }
+            }
 
             // Clear returned value, aka `KeyAction::No`
             report.input_data.fill(0x0);
@@ -242,24 +243,43 @@ pub(crate) async fn process_vial<const ROW: usize, const COL: usize, const NUM_L
                 "Received Vial - SetEncoder, encoder idx: {} clockwise: {} at layer: {}",
                 index, clockwise, layer
             );
-            // if let Some(&mut mut encoders) = keymap.borrow_mut().encoders {
-            //     if let Some(&mut mut encoder_layer) = encoders.get_mut(layer as usize) {
-            //         if let Some(&mut mut encoder) = encoder_layer.get_mut(index as usize) {
-            //             if clockwise == 1 {
-            //                 let keycode = BigEndian::read_u16(&report.output_data[5..7]);
-            //                 let action = from_via_keycode(keycode);
-            //                 info!("Setting clockwise action: {}", action);
-            //                 encoder.0 = action
-            //             } else {
-            //                 let keycode = BigEndian::read_u16(&report.output_data[5..7]);
-            //                 let action = from_via_keycode(keycode);
-            //                 info!("Setting counter-clockwise action: {}", action);
-            //                 encoder.1 = action
-            //             }
-            //         }
-            //     }
-            // }
-            debug!("Received Vial - SetEncoder, data: {:?}", report.output_data);
+            let _encoder = if let Some(ref mut encoder_map) = &mut keymap.borrow_mut().encoders {
+                if let Some(encoder_layer) = encoder_map.get_mut(layer as usize) {
+                    if let Some(encoder) = encoder_layer.get_mut(index as usize) {
+                        if clockwise == 1 {
+                            let keycode = BigEndian::read_u16(&report.output_data[5..7]);
+                            let action = from_via_keycode(keycode);
+                            info!("Setting clockwise action: {:?}", action);
+                            encoder.set_clockwise(action);
+                        } else {
+                            let keycode = BigEndian::read_u16(&report.output_data[5..7]);
+                            let action = from_via_keycode(keycode);
+                            info!("Setting counter-clockwise action: {:?}", action);
+                            encoder.set_counter_clockwise(action);
+                        }
+                        Some(encoder.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            #[cfg(feature = "storage")]
+            // Save the encoder action to the storage after the RefCell is released
+            if let Some(encoder) = _encoder {
+                // Save the encoder action to the storage
+                FLASH_CHANNEL
+                    .send(FlashOperationMessage::EncoderKey {
+                        idx: index,
+                        layer,
+                        action: encoder,
+                    })
+                    .await;
+            }
         }
         _ => (),
     }

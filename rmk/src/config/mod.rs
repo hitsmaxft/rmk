@@ -4,23 +4,21 @@ mod esp_config;
 mod nrf_config;
 
 use ::heapless::Vec;
+use embassy_sync::channel::Channel;
+use embassy_time::Duration;
+use embedded_hal::digital::OutputPin;
 #[cfg(feature = "_esp_ble")]
 pub use esp_config::BleBatteryConfig;
 #[cfg(feature = "_nrf_ble")]
 pub use nrf_config::BleBatteryConfig;
 
-use embassy_sync::channel::Channel;
-use embassy_time::Duration;
-use embedded_hal::digital::OutputPin;
-
-use crate::{
-    combo::{Combo, COMBO_MAX_NUM},
-    event::{Event, KeyEvent},
-    hid::Report,
-    light::LedIndicator,
-    storage::FlashOperationMessage,
-    RawMutex,
-};
+use crate::combo::{Combo, COMBO_MAX_NUM};
+use crate::event::{Event, KeyEvent};
+use crate::hid::Report;
+use crate::light::LedIndicator;
+#[cfg(feature = "storage")]
+use crate::storage::FlashOperationMessage;
+use crate::RawMutex;
 
 /// The config struct for RMK keyboard.
 ///
@@ -53,22 +51,21 @@ pub struct ChannelConfig<
     pub key_event_channel: Channel<RawMutex, KeyEvent, KEY_EVENT_CHANNEL_SIZE>,
     pub event_channel: Channel<RawMutex, Event, EVENT_CHANNEL_SIZE>,
     pub keyboard_report_channel: Channel<RawMutex, Report, REPORT_CHANNEL_SIZE>,
+    #[cfg(feature = "storage")]
     pub(crate) flash_channel: Channel<RawMutex, FlashOperationMessage, 4>,
     pub(crate) led_channel: Channel<RawMutex, LedIndicator, 4>,
     pub(crate) vial_read_channel: Channel<RawMutex, [u8; 32], 4>,
 }
 
-impl<
-        const KEY_EVENT_CHANNEL_SIZE: usize,
-        const EVENT_CHANNEL_SIZE: usize,
-        const REPORT_CHANNEL_SIZE: usize,
-    > Default for ChannelConfig<KEY_EVENT_CHANNEL_SIZE, EVENT_CHANNEL_SIZE, REPORT_CHANNEL_SIZE>
+impl<const KEY_EVENT_CHANNEL_SIZE: usize, const EVENT_CHANNEL_SIZE: usize, const REPORT_CHANNEL_SIZE: usize> Default
+    for ChannelConfig<KEY_EVENT_CHANNEL_SIZE, EVENT_CHANNEL_SIZE, REPORT_CHANNEL_SIZE>
 {
     fn default() -> Self {
         Self {
             key_event_channel: Channel::new(),
             event_channel: Channel::new(),
             keyboard_report_channel: Channel::new(),
+            #[cfg(feature = "storage")]
             flash_channel: Channel::new(),
             led_channel: Channel::new(),
             vial_read_channel: Channel::new(),
@@ -76,11 +73,8 @@ impl<
     }
 }
 
-impl<
-        const KEY_EVENT_CHANNEL_SIZE: usize,
-        const EVENT_CHANNEL_SIZE: usize,
-        const REPORT_CHANNEL_SIZE: usize,
-    > ChannelConfig<KEY_EVENT_CHANNEL_SIZE, EVENT_CHANNEL_SIZE, REPORT_CHANNEL_SIZE>
+impl<const KEY_EVENT_CHANNEL_SIZE: usize, const EVENT_CHANNEL_SIZE: usize, const REPORT_CHANNEL_SIZE: usize>
+    ChannelConfig<KEY_EVENT_CHANNEL_SIZE, EVENT_CHANNEL_SIZE, REPORT_CHANNEL_SIZE>
 {
     pub fn new() -> Self {
         Self::default()
