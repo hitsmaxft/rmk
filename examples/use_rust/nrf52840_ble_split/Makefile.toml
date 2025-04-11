@@ -18,7 +18,7 @@ args = [
     "--",
     "-O",
     "ihex",
-    "rmk-central.hex",
+    "gynus-rmk-central.hex",
 ]
 dependencies = ["install-llvm-tools", "flip-link"]
 
@@ -36,7 +36,7 @@ args = [
     "--",
     "-O",
     "ihex",
-    "rmk-peripheral.hex",
+    "gynus-rmk-peripheral.hex",
 ]
 dependencies = ["install-llvm-tools", "flip-link"]
 
@@ -49,9 +49,9 @@ command = "cargo"
 args = [
     "hex-to-uf2",
     "--input-path",
-    "rmk-central.hex",
+    "gynus-rmk-central.hex",
     "--output-path",
-    "rmk-central.uf2",
+    "gynus-rmk-central.uf2",
     "--family",
     "nrf52840",
 ]
@@ -66,9 +66,9 @@ command = "cargo"
 args = [
     "hex-to-uf2",
     "--input-path",
-    "rmk-peripheral.hex",
+    "gynus-rmk-peripheral.hex",
     "--output-path",
-    "rmk-peripheral.uf2",
+    "gynus-rmk-peripheral.uf2",
     "--family",
     "nrf52840",
 ]

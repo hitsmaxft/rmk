@@ -41,9 +41,6 @@ pub struct BootMagicTimeout<'a> {
     config: &'a RefCell<BootMagicConfig>,
 }
 
-pub struct BootMagicTimeout2<'a> {
-    config: Channel<bool>,
-}
 
 impl<'a> BootMagicTimeout<'a> {
 
