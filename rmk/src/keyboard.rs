@@ -1018,6 +1018,12 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         result
     }
 
+    pub fn reboot_to_bootloader(&self) {
+        // Reboot to bootloader
+        //TODO add stop
+        boot::jump_to_bootloader();
+    }
+
     /// Calculates the combined effect of all modifiers:
     /// - text macro related modifier suppressions + capitalization
     /// - registered (held) modifiers keys

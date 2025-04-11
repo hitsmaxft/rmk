@@ -10,6 +10,7 @@ pub mod adc;
 pub mod battery;
 pub mod joystick;
 pub mod rotary_encoder;
+pub mod boot_magic;
 
 /// The trait for runnable input devices and processors.
 ///

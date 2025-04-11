@@ -17,6 +17,7 @@ use embassy_nrf::{
     saadc::{self, AnyInput, Input as _, Saadc},
     usb::{self, vbus_detect::SoftwareVbusDetect, Driver},
 };
+use core::cell::RefCell;
 use panic_probe as _;
 use rmk::{
     ble::SOFTWARE_VBUS,
@@ -25,13 +26,10 @@ use rmk::{
         BleBatteryConfig, ControllerConfig, KeyboardUsbConfig, RmkConfig, StorageConfig, VialConfig,
     },
     debounce::default_debouncer::DefaultDebouncer,
-    futures::future::{join, join4},
+    futures::future::{join, join5},
     initialize_keymap_and_storage, initialize_nrf_sd_and_flash,
     input_device::{
-        adc::{AnalogEventType, NrfAdc},
-        battery::BatteryProcessor,
-        rotary_encoder::{DefaultPhase, RotaryEncoder, RotaryEncoderProcessor},
-        Runnable,
+        adc::{AnalogEventType, NrfAdc}, battery::BatteryProcessor, boot_magic::{self, BootmagicConfig}, rotary_encoder::{DefaultPhase, RotaryEncoder, RotaryEncoderProcessor}, Runnable
     },
     keyboard::Keyboard,
     light::LightController,
@@ -90,8 +88,8 @@ async fn main(spawner: Spawner) {
     let keyboard_usb_config = KeyboardUsbConfig {
         vid: 0x4c4b,
         pid: 0x4643,
-        manufacturer: "Haobo",
-        product_name: "RMK Keyboard",
+        manufacturer: "hitsmaxft",
+        product_name: "Gynus Keyboard",
         serial_number: "vial:f64c2b3c:000001",
     };
     let vial_config = VialConfig::new(VIAL_KEYBOARD_ID, VIAL_KEYBOARD_DEF);
@@ -100,6 +98,7 @@ async fn main(spawner: Spawner) {
     let storage_config = StorageConfig {
         start_addr: 0,
         num_sectors: 6,
+        clear_storage: true,
         ..Default::default()
     };
     let rmk_config = RmkConfig {
@@ -110,7 +109,13 @@ async fn main(spawner: Spawner) {
         ..Default::default()
     };
 
-    let (input_pins, output_pins) = config_matrix_pins_nrf!(peripherals: p, input: [P0_30, P0_31, P0_29, P0_02], output:  [P0_28, P0_03, P1_10, P1_11, P1_13, P0_09, P0_10]);
+    //## promicro pin: 4 5 6 7
+    //input_pins = ["P1_00", "P0_11", "P1_04", "P1_06"]
+    //promicro pin: 21 20 19 18 15 14
+    //output_pins = ["P0_31", "P0_29", "P0_02", "P1_15", "P1_13", "P1_11"]    
+    let (input_pins, output_pins) = config_matrix_pins_nrf!(peripherals: p, 
+        input: [P1_00, P0_11, P1_04, P1_06], 
+        output:  [P0_31, P0_29, P0_02, P1_15, P1_13, P1_11]);
 
     // Initialize the Softdevice and flash
     let central_addr = [0x18, 0xe2, 0x21, 0x80, 0xc0, 0xc7];
@@ -131,13 +136,13 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    let pin_a = Input::new(AnyPin::from(p.P1_06), embassy_nrf::gpio::Pull::None);
-    let pin_b = Input::new(AnyPin::from(p.P1_04), embassy_nrf::gpio::Pull::None);
+    let pin_a = Input::new(AnyPin::from(p.P0_09), embassy_nrf::gpio::Pull::None);
+    let pin_b = Input::new(AnyPin::from(p.P0_10), embassy_nrf::gpio::Pull::None);
     let mut encoder = RotaryEncoder::with_phase(pin_a, pin_b, DefaultPhase, 0);
 
     // Initialize the matrix + keyboard
     let debouncer = DefaultDebouncer::<4, 7>::new();
-    let mut matrix = CentralMatrix::<_, _, _, 0, 0, 4, 7>::new(input_pins, output_pins, debouncer);
+    let mut matrix = CentralMatrix::<_, _, _, 0, 0, 4, 6>::new(input_pins, output_pins, debouncer);
     let mut keyboard = Keyboard::new(&keymap, rmk_config.behavior_config.clone());
 
     // Initialize the light controller
@@ -149,13 +154,21 @@ async fn main(spawner: Spawner) {
     let mut adc_device = NrfAdc::new(saadc, [AnalogEventType::Battery], 12000, None);
     let mut batt_proc = BatteryProcessor::new(2000, 2806, &keymap);
 
+
+    let bootmagic_config = RefCell::new(boot_magic::BootmagicConfig::new(0, 0, 2));
+
+    let (mut bootmagic_processor, mut boot_magic_timeout) = boot_magic::BootmagicProcessor::create_pair(
+        &bootmagic_config, &keymap
+    );
+
     // Start
-    join4(
+    join5(
+        boot_magic_timeout.wait_for_bootmagic(),
         run_devices! (
             (matrix, encoder, adc_device) => EVENT_CHANNEL,
         ),
         run_processor_chain! {
-            EVENT_CHANNEL => [encoder_processor, batt_proc],
+            EVENT_CHANNEL => [encoder_processor, batt_proc, bootmagic_processor],
         },
         keyboard.run(),
         join(
