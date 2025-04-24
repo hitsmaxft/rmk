@@ -1,7 +1,11 @@
+use embassy_time::{Instant, Timer};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
-use crate::input_device::rotary_encoder::Direction;
+use crate::{
+    action::{Action, KeyAction},
+    input_device::rotary_encoder::Direction,
+};
 
 /// Raw events from input devices and keyboards
 ///
@@ -24,6 +28,8 @@ pub enum Event {
     AxisEventStream(AxisEvent),
     /// Battery percentage event
     Battery(u16),
+    /// Charging state changed event, true means charging, false means not charging
+    ChargingState(bool),
     /// End of the event sequence
     ///
     /// This is used with [`Event::AxisEventStream`] to indicate the end of the event sequence.
@@ -90,4 +96,15 @@ pub struct KeyEvent {
     pub row: u8,
     pub col: u8,
     pub pressed: bool,
+}
+
+// record pressing tap hold keys
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PressedKeyEvent {
+    pub key_event: KeyEvent,
+    pub tap_action: Action,
+    pub hold_action: Action,
+    pub pressed_time: Instant,
+    pub deadline: u64,
 }

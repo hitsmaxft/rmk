@@ -18,6 +18,8 @@ use std::{env, fs};
 use xz2::read::XzEncoder;
 
 fn main() {
+    println!("cargo:rerun-if-changed=keyboard.toml");
+
     // Generate vial config at the root of project
     println!("cargo:rerun-if-changed=vial.json");
     generate_vial_config();
@@ -61,8 +63,7 @@ fn generate_vial_config() {
     let mut content = String::new();
     match File::open(p) {
         Ok(mut file) => {
-            file.read_to_string(&mut content)
-                .expect("Cannot read vial.json");
+            file.read_to_string(&mut content).expect("Cannot read vial.json");
         }
         Err(e) => println!("Cannot find vial.json {:?}: {}", p, e),
     };
@@ -78,6 +79,7 @@ fn generate_vial_config() {
         const_declaration!(pub VIAL_KEYBOARD_DEF = keyboard_def_compressed),
         const_declaration!(pub VIAL_KEYBOARD_ID = keyboard_id),
     ]
+    .map(|s| "#[allow(clippy::redundant_static_lifetimes)]\n".to_owned() + s.as_str())
     .join("\n");
     fs::write(out_file, const_declarations).unwrap();
 }

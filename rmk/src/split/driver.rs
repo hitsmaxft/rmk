@@ -1,16 +1,15 @@
 //! The abstracted driver layer of the split keyboard.
 //!
-use super::SplitMessage;
-use crate::channel::EVENT_CHANNEL;
-use crate::input_device::InputDevice;
-use crate::CONNECTION_STATE;
-use crate::{
-    channel::KEY_EVENT_CHANNEL,
-    event::{Event, KeyEvent},
-};
 use core::sync::atomic::Ordering;
+
 use embassy_futures::select::select;
 use embassy_time::{Instant, Timer};
+
+use super::SplitMessage;
+use crate::channel::{EVENT_CHANNEL, KEY_EVENT_CHANNEL};
+use crate::event::{Event, KeyEvent};
+use crate::input_device::InputDevice;
+use crate::CONNECTION_STATE;
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -20,6 +19,7 @@ pub(crate) enum SplitDriverError {
     DeserializeError,
     SerializeError,
     BleError(u8),
+    Disconnected,
 }
 
 /// Split message reader from other split devices
@@ -68,23 +68,22 @@ impl<
     ///
     /// The manager receives from the peripheral and forward the message to `KEY_EVENT_CHANNEL`.
     /// It also sync the `ConnectionState` to the peripheral periodically.
-    pub(crate) async fn run(mut self) -> ! {
+    pub(crate) async fn run(mut self) {
         let mut conn_state = CONNECTION_STATE.load(Ordering::Acquire);
         // Send connection state once on start
-        if let Err(e) = self
-            .receiver
-            .write(&SplitMessage::ConnectionState(conn_state))
-            .await
-        {
-            error!("SplitDriver write error: {:?}", e);
+        if let Err(e) = self.receiver.write(&SplitMessage::ConnectionState(conn_state)).await {
+            match e {
+                SplitDriverError::Disconnected => return,
+                _ => error!("SplitDriver write error: {:?}", e),
+            }
         }
 
         let mut last_sync_time = Instant::now();
 
         loop {
-            // Calculate the time until the next 1000ms sync
+            // Calculate the time until the next 3000ms sync
             let elapsed = last_sync_time.elapsed().as_millis() as u64;
-            let wait_time = if elapsed >= 1000 { 1 } else { 1000 - elapsed };
+            let wait_time = if elapsed >= 3000 { 1 } else { 3000 - elapsed };
 
             // Read the message from peripheral, or sync the connection state every 1000ms.
             match select(self.read_event(), Timer::after_millis(wait_time)).await {
@@ -101,12 +100,12 @@ impl<
                 embassy_futures::select::Either::Second(_) => {
                     // Timer elapsed, sync the connection state
                     conn_state = CONNECTION_STATE.load(Ordering::Acquire);
-                    if let Err(e) = self
-                        .receiver
-                        .write(&SplitMessage::ConnectionState(conn_state))
-                        .await
-                    {
-                        error!("SplitDriver write error: {:?}", e);
+                    debug!("Syncing connection state to peripheral: {}", conn_state);
+                    if let Err(e) = self.receiver.write(&SplitMessage::ConnectionState(conn_state)).await {
+                        match e {
+                            SplitDriverError::Disconnected => return,
+                            _ => error!("SplitDriver write error: {:?}", e),
+                        }
                     }
                     last_sync_time = Instant::now();
                 }
