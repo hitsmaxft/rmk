@@ -102,7 +102,8 @@ features = ["split"]
 cortex-m = { version = "0.7" }
 
 [features]
-default = ["col2row", "defmt", "storage"]
+default = ["col2row", "storage"]
+#default = ["col2row", "defmt", "storage"]
 
 ## the storage is optional to save memory
 storage = ["dep:embedded-storage", "dep:embedded-storage-async"]
