@@ -1518,9 +1518,6 @@ mod test {
     use crate::hid_state::HidModifiers;
     use crate::{a, k, layer, mo, th};
 
-    // mod key values
-    const KC_LShift: u8 = 1 << 1;
-    const KC_LGUI: u8 = 1 << 3;
     // Init logger for tests
     #[ctor::ctor]
     fn init_log() {
@@ -1643,35 +1640,6 @@ mod test {
     }
 
     #[test]
-    fn test_tap_hold_key_multi_hold() {
-
-        let main = async {
-            let mut keyboard = create_test_keyboard();
-
-
-            let sequence = key_sequence![
-                [2, 1, true, 10],  // Press th!(A,shift)
-                [2, 2, true, 10], //  press th!(S,lgui)
-                //hold timeout
-                [2, 3, true, 270], //  press d
-                [2, 3, false, 290], // release d
-                [2, 1, false, 380], // Release A
-                [2, 2, false, 400], // Release s
-            ];
-            let expected_reports = key_report![
-                [KC_LShift, [0, 0, 0, 0, 0, 0]], //shift
-                [KC_LShift|KC_LGUI, [0, 0, 0, 0, 0, 0]], //shift
-                [KC_LShift|KC_LGUI, [KeyCode::D as u8, 0, 0, 0, 0, 0]], // 0x7
-                [KC_LShift|KC_LGUI, [0, 0, 0, 0, 0, 0]], //shift
-                [KC_LGUI, [0, 0, 0, 0, 0, 0]], //shift and gui
-                [0, [0, 0, 0, 0, 0, 0]],
-            ];
-
-            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
-        };
-        block_on(main);
-    }
-    #[test]
     fn test_tap_hold_key_tap_and_single_hold() {
 
         let main = async {
@@ -1717,87 +1685,6 @@ mod test {
         block_on(main);
     }
 
-    #[test]
-    fn test_combo_timeout_and_ignore() {
-        let main = async {
-            let mut keyboard = create_test_keyboard_with_config(BehaviorConfig {
-                combo: get_combos_config(),
-                ..Default::default()
-            });
-
-            let sequence = key_sequence![
-                [3, 4, true, 10],   // Press V
-                [3, 4, false, 100], // Release V
-            ];
-
-            let expected_reports = key_report![
-                [0, [KeyCode::V as u8, 0, 0, 0, 0, 0]],
-            ];
-
-            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
-        };
-
-        block_on(main);
-    }
-
-    #[test]
-    fn test_combo_with_mod_then_mod_timeout() {
-        let main = async {
-            let mut keyboard = create_test_keyboard_with_config(BehaviorConfig {
-                combo: get_combos_config(),
-                ..Default::default()
-            });
-            let sequence = key_sequence![
-                [3, 4, true, 10], // Press V
-                [3, 5, true, 10], // Press B
-                [1, 4, true, 50], // Press R
-                [1, 4, false, 90], // Release R
-                [3, 4, false, 150], // Release V
-                [3, 5, false, 170], // Release B
-            ];
-
-            let expected_reports = key_report![
-                [KC_LShift, [0; 6]],
-                [KC_LShift, [KeyCode::R as u8, 0, 0, 0, 0, 0]],
-                [KC_LShift, [0; 6]],
-                [0, [0; 6]],
-            ];
-
-            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
-        };
-
-        block_on(main);
-    }
-
-    #[test]
-    fn test_combo_with_mod() {
-        let main = async {
-            let mut keyboard = create_test_keyboard_with_config(BehaviorConfig {
-                combo: get_combos_config(),
-                ..Default::default()
-            });
-
-            let sequence = key_sequence![
-                [3, 4, true, 10],   // Press V
-                [3, 5, true, 10],   // Press B
-                [3, 6, true, 50],   // Press N
-                [3, 6, false, 70],  // Release N
-                [3, 4, false, 100], // Release V
-                [3, 5, false, 110], // Release B
-            ];
-
-            let expected_reports = key_report![
-                [KC_LShift, [0; 6]],
-                [KC_LShift, [KeyCode::N as u8, 0, 0, 0, 0, 0]],
-                [KC_LShift, [0; 6]],
-                [0, [0; 6]],
-            ];
-
-            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
-        };
-
-        block_on(main);
-    }
 
     #[test]
     fn test_multiple_keys() {

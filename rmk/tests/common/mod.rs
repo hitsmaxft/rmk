@@ -1,37 +1,41 @@
 pub mod test_macro;
 
+use core::cell::RefCell;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use futures::{join, FutureExt};
-use rusty_fork::rusty_fork_test;
 
 use rmk::action::KeyAction;
-use rmk::config::{BehaviorConfig, CombosConfig, ForksConfig};
-use rmk::fork::Fork;
-use rmk::hid_state::HidModifiers;
+use rmk::config::{BehaviorConfig, CombosConfig};
 use rmk::{a, k, layer, mo, th};
 
-use rmk::hid::Report;
+use heapless::Vec;
 use rmk::channel::{KEYBOARD_REPORT_CHANNEL, KEY_EVENT_CHANNEL};
 use rmk::combo::Combo;
-use rmk::event::{KeyEvent, PressedKeyEvent};
+use rmk::event::KeyEvent;
+use rmk::hid::Report;
 use rmk::input_device::Runnable;
-use rmk::keycode::{KeyCode, ModifierCombination};
+use rmk::keyboard::Keyboard;
 use rmk::keymap::KeyMap;
+use rmk::usb::descriptor::KeyboardReport;
+
+// mod key values
+pub(crate) const KC_LSHIFT: u8 = 1 << 1;
+pub(crate) const KC_LGUI: u8 = 1 << 3;
 
 #[derive(Debug, Clone)]
 pub struct TestKeyPress {
-    row: u8,
-    col: u8,
-    pressed: bool,
-    delay: u64, // Delay before this key event in milliseconds
+    pub row: u8,
+    pub col: u8,
+    pub pressed: bool,
+    pub delay: u64, // Delay before this key event in milliseconds
 }
 
-pub async fn run_key_sequence_test<'a, const N: usize>(
-    keyboard: &mut Keyboard<'a, 5, 14, 2>,
+pub async fn run_key_sequence_test<'a, const N: usize, const ROW: usize, const COL: usize, const NUM_LAYER: usize>(
+    keyboard: &mut Keyboard<'a, ROW, COL, NUM_LAYER>,
     key_sequence: &[TestKeyPress],
     expected_reports: Vec<KeyboardReport, N>,
 ) {
@@ -96,79 +100,74 @@ pub async fn run_key_sequence_test<'a, const N: usize>(
     );
 }
 
-    // Init logger for tests
-    #[ctor::ctor]
-    pub fn init_log() {
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::Debug)
-            .is_test(true)
-            .try_init();
+#[rustfmt::skip]
+pub const fn get_keymap() -> [[[KeyAction; 14]; 5]; 2] {
+    [
+        layer!([
+            [k!(Grave), k!(Kc1), k!(Kc2), k!(Kc3), k!(Kc4), k!(Kc5), k!(Kc6), k!(Kc7), k!(Kc8), k!(Kc9), k!(Kc0), k!(Minus), k!(Equal), k!(Backspace)],
+            [k!(Tab), k!(Q), k!(W), k!(E), k!(R), k!(T), k!(Y), k!(U), k!(I), k!(O), k!(P), k!(LeftBracket), k!(RightBracket), k!(Backslash)],
+            [k!(Escape), th!(A, LShift), th!(S, LGui), k!(D), k!(F), k!(G), k!(H), k!(J), k!(K), k!(L), k!(Semicolon), k!(Quote), a!(No), k!(Enter)],
+            [k!(LShift), k!(Z), k!(X), k!(C), k!(V), k!(B), k!(N), k!(M), k!(Comma), k!(Dot), k!(Slash), a!(No), a!(No), k!(RShift)],
+            [k!(LCtrl), k!(LGui), k!(LAlt), a!(No), a!(No), k!(Space), a!(No), a!(No), a!(No), mo!(1), k!(RAlt), a!(No), k!(RGui), k!(RCtrl)]
+        ]),
+        layer!([
+            [k!(Grave), k!(F1), k!(F2), k!(F3), k!(F4), k!(F5), k!(F6), k!(F7), k!(F8), k!(F9), k!(F10), k!(F11), k!(F12), k!(Delete)],
+            [a!(No), a!(Transparent), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No)],
+            [k!(CapsLock), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No)],
+            [a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), k!(Up)],
+            [a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), k!(Left), a!(No), k!(Down), k!(Right)]
+        ]),
+    ]
+}
+
+#[rustfmt::skip]
+pub fn get_combos_config() -> CombosConfig {
+    // Define the function to return the appropriate combo configuration
+    CombosConfig {
+        combos: Vec::from_iter([
+            Combo::new(
+                [
+                    k!(V), //3,4
+                    k!(B), //3,5
+                ]
+                .to_vec(),
+                k!(LShift),
+                Some(0),
+            ),
+            Combo::new(
+                [
+                    k!(R), //1,4
+                    k!(T), //1,5
+                ]
+                .to_vec(),
+                k!(LAlt),
+                Some(0),
+            ),
+        ]),
+        timeout: Duration::from_millis(100),
     }
+}
 
-    #[rustfmt::skip]
-    pub const fn get_keymap() -> [[[KeyAction; 14]; 5]; 2] {
-        [
-            layer!([
-                [k!(Grave), k!(Kc1), k!(Kc2), k!(Kc3), k!(Kc4), k!(Kc5), k!(Kc6), k!(Kc7), k!(Kc8), k!(Kc9), k!(Kc0), k!(Minus), k!(Equal), k!(Backspace)],
-                [k!(Tab), k!(Q), k!(W), k!(E), k!(R), k!(T), k!(Y), k!(U), k!(I), k!(O), k!(P), k!(LeftBracket), k!(RightBracket), k!(Backslash)],
-                [k!(Escape), th!(A, LShift), th!(S, LGui), k!(D), k!(F), k!(G), k!(H), k!(J), k!(K), k!(L), k!(Semicolon), k!(Quote), a!(No), k!(Enter)],
-                [k!(LShift), k!(Z), k!(X), k!(C), k!(V), k!(B), k!(N), k!(M), k!(Comma), k!(Dot), k!(Slash), a!(No), a!(No), k!(RShift)],
-                [k!(LCtrl), k!(LGui), k!(LAlt), a!(No), a!(No), k!(Space), a!(No), a!(No), a!(No), mo!(1), k!(RAlt), a!(No), k!(RGui), k!(RCtrl)]
-            ]),
-            layer!([
-                [k!(Grave), k!(F1), k!(F2), k!(F3), k!(F4), k!(F5), k!(F6), k!(F7), k!(F8), k!(F9), k!(F10), k!(F11), k!(F12), k!(Delete)],
-                [a!(No), a!(Transparent), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No)],
-                [k!(CapsLock), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No)],
-                [a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), k!(Up)],
-                [a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), k!(Left), a!(No), k!(Down), k!(Right)]
-            ]),
-        ]
-    }
+pub fn create_test_keyboard_with_config(config: BehaviorConfig) -> Keyboard<'static, 5, 14, 2> {
+    return Keyboard::new(wrap_keymap(get_keymap(), config.clone()), config);
+}
 
-    #[rustfmt::skip]
-    pub fn get_combos_config() -> CombosConfig {
-        // Define the function to return the appropriate combo configuration
-        CombosConfig {
-            combos: Vec::from_iter([
-                Combo::new(
-                    [
-                        k!(V), //3,4
-                        k!(B), //3,5
-                    ]
-                    .to_vec(),
-                    k!(LShift),
-                    Some(0),
-                ),
-                Combo::new(
-                    [
-                        k!(R), //1,4
-                        k!(T), //1,5
-                    ]
-                    .to_vec(),
-                    k!(LAlt),
-                    Some(0),
-                ),
-            ]),
-            timeout: Duration::from_millis(100),
-        }
-    }
+pub fn wrap_keymap<'a, const R: usize, const C: usize, const L: usize>(
+    keymap: [[[KeyAction; C]; R]; L],
+    config: BehaviorConfig,
+) -> &'a mut RefCell<KeyMap<'static, R, C, L>> {
+    // Box::leak is acceptable in tests
+    let leaked_keymap = Box::leak(Box::new(keymap));
 
-    pub fn create_test_keyboard_with_config(config: BehaviorConfig) -> Keyboard<'static, 5, 14, 2> {
-        // Box::leak is acceptable in tests
-        let keymap = Box::new(get_keymap());
-        let leaked_keymap = Box::leak(keymap);
+    let keymap = block_on(KeyMap::new(leaked_keymap, None, config));
+    let keymap_cell = RefCell::new(keymap);
+    return Box::leak(Box::new(keymap_cell));
+}
 
-        let keymap = block_on(KeyMap::new(leaked_keymap, None, config.clone()));
-        let keymap_cell = RefCell::new(keymap);
-        let keymap_ref = Box::leak(Box::new(keymap_cell));
+pub fn create_test_keyboard() -> Keyboard<'static, 5, 14, 2> {
+    create_test_keyboard_with_config(BehaviorConfig::default())
+}
 
-        Keyboard::new(keymap_ref, config)
-    }
-
-    pub fn create_test_keyboard() -> Keyboard<'static, 5, 14, 2> {
-        create_test_keyboard_with_config(BehaviorConfig::default())
-    }
-
-    pub fn key_event(row: u8, col: u8, pressed: bool) -> KeyEvent {
-        KeyEvent { row, col, pressed }
-    }
+pub fn key_event(row: u8, col: u8, pressed: bool) -> KeyEvent {
+    KeyEvent { row, col, pressed }
+}

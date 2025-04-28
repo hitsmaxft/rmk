@@ -1,9 +1,10 @@
+extern crate rmk;
 
 // a rust macro to map a str to k!(a) as u8
 #[macro_export]
 macro_rules! kc8 {
     ($key: ident) => {
-        $crate::keycode::KeyCode::$key as u8
+        rmk::keycode::KeyCode::$key as u8
     };
 }
 
@@ -13,7 +14,7 @@ macro_rules! key_sequence {
 ($([$row:expr, $col:expr, $pressed:expr, $delay:expr]),* $(,)?) => {
     vec![
         $(
-            TestKeyPress {
+            $crate::common::TestKeyPress {
                 row: $row,
                 col: $col,
                 pressed: $pressed,
@@ -37,9 +38,9 @@ macro_rules! key_report {
     };
 
 
-    let mut reports: Vec<KeyboardReport, N> = Vec::new();
+    let mut reports: heapless::Vec<rmk::usb::descriptor::KeyboardReport, N> = heapless::Vec::new();
     $(
-        reports.push(KeyboardReport {
+        reports.push(rmk::usb::descriptor::KeyboardReport {
             modifier: $modifier,
             keycodes: $keys,
             leds: 0,
