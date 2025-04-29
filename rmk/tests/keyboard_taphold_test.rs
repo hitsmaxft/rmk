@@ -6,20 +6,12 @@ use rusty_fork::rusty_fork_test;
 use std::cell::RefCell;
 
 use rmk::{
-    action::KeyAction,
-    config::{BehaviorConfig, CombosConfig, ForksConfig, TapHoldConfig},
-    a,
+    config::{BehaviorConfig, TapHoldConfig},
     k,
-    layer,
-    mo,
     th,
-    channel::{KEYBOARD_REPORT_CHANNEL, KEY_EVENT_CHANNEL},
-    combo::Combo,
-    event::{KeyEvent, PressedKeyEvent},
     keyboard::Keyboard,
-    keycode::{KeyCode, ModifierCombination},
-    keymap::KeyMap,
-    usb::descriptor::KeyboardReport
+    keycode::KeyCode,
+    keymap::KeyMap
 };
 
 mod common;

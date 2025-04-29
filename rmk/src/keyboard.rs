@@ -1504,9 +1504,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
 mod test {
 
     use embassy_futures::block_on;
-    use embassy_futures::select::select;
-    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-    use embassy_sync::mutex::Mutex;
+    use embassy_futures::select::Either::{First, Second};
     use embassy_time::{Duration, Timer};
     use futures::{join, FutureExt};
     use rusty_fork::rusty_fork_test;
@@ -1591,6 +1589,16 @@ mod test {
         create_test_keyboard_with_config(BehaviorConfig::default())
     }
 
+    fn create_test_keyboard_with_forks(fork1: Fork, fork2: Fork) -> Keyboard<'static, 5, 14, 2> {
+        let mut cfg = ForksConfig::default();
+        let _ = cfg.forks.push(fork1);
+        let _ = cfg.forks.push(fork2);
+        create_test_keyboard_with_config(BehaviorConfig {
+            fork: cfg,
+            ..BehaviorConfig::default()
+        })
+    }
+
     fn key_event(row: u8, col: u8, pressed: bool) -> KeyEvent {
         KeyEvent { row, col, pressed }
     }
@@ -1645,11 +1653,10 @@ mod test {
         let main = async {
             let mut keyboard = create_test_keyboard();
             let tap_hold_action = KeyAction::TapHold(Action::Key(KeyCode::A), Action::Key(KeyCode::LShift));
-
             // Tap
             join!(
                 keyboard.process_key_action(tap_hold_action.clone(), key_event(2, 1, true)),
-                Timer::after(Duration::from_millis(10)).then( |_| async {
+                Timer::after(Duration::from_millis(0)).then( |_| async {
                 //send release event
                   KEY_EVENT_CHANNEL.send(key_event(2, 1, false)).await;
                 })
@@ -1682,7 +1689,6 @@ mod test {
                 .await;
             assert_eq!(keyboard.held_modifiers, HidModifiers::new()); // Shift should be released
         };
-        block_on(main);
     }
 
 
@@ -1834,17 +1840,7 @@ mod test {
         };
         block_on(main);
     }
-    }
 
-    fn create_test_keyboard_with_forks(fork1: Fork, fork2: Fork) -> Keyboard<'static, 5, 14, 2> {
-        let mut cfg = ForksConfig::default();
-        let _ = cfg.forks.push(fork1);
-        let _ = cfg.forks.push(fork2);
-        create_test_keyboard_with_config(BehaviorConfig {
-            fork: cfg,
-            ..BehaviorConfig::default()
-        })
-    }
 
     #[test]
     fn test_fork_with_held_modifier() {
@@ -2065,5 +2061,6 @@ mod test {
         };
 
         block_on(main);
+    }
     }
 }
