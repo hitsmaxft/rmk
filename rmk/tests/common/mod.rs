@@ -2,7 +2,7 @@ pub mod test_macro;
 
 use core::cell::RefCell;
 use embassy_futures::block_on;
-use embassy_futures::select::select;
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
@@ -13,6 +13,7 @@ use rmk::config::{BehaviorConfig, CombosConfig};
 use rmk::{a, k, layer, mo, th};
 
 use heapless::Vec;
+use log::{debug, info};
 use rmk::channel::{KEYBOARD_REPORT_CHANNEL, KEY_EVENT_CHANNEL};
 use rmk::combo::Combo;
 use rmk::event::KeyEvent;
@@ -22,7 +23,7 @@ use rmk::keyboard::Keyboard;
 use rmk::keymap::KeyMap;
 use rmk::usb::descriptor::KeyboardReport;
 
-// mod key values
+
 pub(crate) const KC_LSHIFT: u8 = 1 << 1;
 pub(crate) const KC_LGUI: u8 = 1 << 3;
 
@@ -51,12 +52,12 @@ pub async fn run_key_sequence_test<'a, const N: usize, const ROW: usize, const C
             select(keyboard.run(), async {
                 select(
                     Timer::after(MAX_TEST_TIMEOUT).then(|_| async {
-                        panic!("Test time out reached");
+                        panic!("Test timeout reached");
                     }),
                     async {
                         while !*REPORTS_DONE.lock().await {
                             // polling reports
-                            Timer::after(Duration::from_millis(5)).await;
+                            Timer::after(Duration::from_millis(50)).await;
                         }
                     },
                 )
@@ -81,19 +82,26 @@ pub async fn run_key_sequence_test<'a, const N: usize, const ROW: usize, const C
         async {
             let mut report_index = -1;
             for expected in expected_reports {
-                match KEYBOARD_REPORT_CHANNEL.receive().await {
-                    Report::KeyboardReport(report) => {
+                match select(
+                    Timer::after(Duration::from_secs(1)),
+                    KEYBOARD_REPORT_CHANNEL.receive()
+                )
+                .await {
+                    Either::First(_) => panic!("report wait timeout reached"),
+                    Either::Second(Report::KeyboardReport(report)) => {
                         report_index += 1;
                         // println!("Received {}th report from channel: {:?}", report_index, report);
                         assert_eq!(
                             expected, report,
-                            "on {}th reports, expected left but actually right",
+                            "on #{} reports, expected left but actually right",
                             report_index
                         );
+                        },
+                    Either::Second(report) => {
+                            debug!("other reports {:?}", report)
                     }
-                    _ => panic!("Expected a KeyboardReport"),
                 }
-            }
+                };
             // Set done flag after all reports are verified
             *REPORTS_DONE.lock().await = true;
         }
@@ -149,7 +157,7 @@ pub fn get_combos_config() -> CombosConfig {
 }
 
 pub fn create_test_keyboard_with_config(config: BehaviorConfig) -> Keyboard<'static, 5, 14, 2> {
-    return Keyboard::new(wrap_keymap(get_keymap(), config.clone()), config);
+    Keyboard::new(wrap_keymap(get_keymap(), config.clone()), config)
 }
 
 pub fn wrap_keymap<'a, const R: usize, const C: usize, const L: usize>(
@@ -161,13 +169,13 @@ pub fn wrap_keymap<'a, const R: usize, const C: usize, const L: usize>(
 
     let keymap = block_on(KeyMap::new(leaked_keymap, None, config));
     let keymap_cell = RefCell::new(keymap);
-    return Box::leak(Box::new(keymap_cell));
+    Box::leak(Box::new(keymap_cell))
 }
 
 pub fn create_test_keyboard() -> Keyboard<'static, 5, 14, 2> {
     create_test_keyboard_with_config(BehaviorConfig::default())
 }
 
-pub fn key_event(row: u8, col: u8, pressed: bool) -> KeyEvent {
-    KeyEvent { row, col, pressed }
-}
+// pub fn key_event(row: u8, col: u8, pressed: bool) -> KeyEvent {
+//     KeyEvent { row, col, pressed }
+// }

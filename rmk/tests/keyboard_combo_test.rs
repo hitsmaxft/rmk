@@ -1,10 +1,10 @@
 mod common;
 
-pub(crate) use crate::common::*;
 use embassy_futures::block_on;
+use rusty_fork::rusty_fork_test;
 use rmk::config::BehaviorConfig;
 use rmk::keycode::KeyCode;
-use rusty_fork::rusty_fork_test;
+pub(crate) use crate::common::*;
 
 // Init logger for tests
 #[ctor::ctor]
@@ -14,6 +14,7 @@ pub fn init_log() {
         .is_test(true)
         .try_init();
 }
+
 
 rusty_fork_test! {
 
@@ -98,4 +99,5 @@ fn test_combo_with_mod() {
 
     block_on(main);
 }
-}
+
+}//fork ends
