@@ -3,6 +3,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
 use crate::{action::Action, input_device::rotary_encoder::Direction};
+use crate::action::KeyAction;
+use crate::keycode::KeyCode::No;
 
 /// Raw events from input devices and keyboards
 ///
@@ -95,13 +97,94 @@ pub struct KeyEvent {
     pub pressed: bool,
 }
 
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HoldingKey {
+    TapHold(PressedTapHold),
+    Tapping(SingleHold),
+}
+
+impl HoldingKey{
+    pub(crate) fn start_time(&self) -> Instant {
+        match  self {
+            HoldingKey::TapHold(h) => h.pressed_time,
+            HoldingKey::Tapping(h) => h.pressed_time,
+        }
+    }
+    pub(crate) fn key_event(&self) -> KeyEvent {
+
+        match  self {
+            HoldingKey::TapHold(h) => h.key_event,
+            HoldingKey::Tapping(h) => h.key_event,
+        }
+    }
+}
+
+pub trait HoldingKeyTrait {
+    fn update_state(&mut self, new_state: TapHoldState);
+    fn press_time(& self) -> Instant;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TapHoldState {
+    //happen after press event arrives
+    Initial,
+    //tapping event
+    Tap,
+    //release tapping event
+    PostTap,
+    //holding event
+    Hold,
+    //release holding event
+    PostHold,
+    //reserved
+    Release,
+}
+
+
 // record pressing tap hold keys
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PressedKeyEvent {
+pub struct PressedTapHold {
     pub key_event: KeyEvent,
     pub tap_action: Action,
     pub hold_action: Action,
     pub pressed_time: Instant,
     pub deadline: u64,
+    pub state: TapHoldState,
+}
+
+impl PressedTapHold {
+    pub(crate) fn update_state(&mut self, new_state: TapHoldState) {
+        self.state = new_state
+    }
+
+    const NO: Action = Action::Key(No);
+
+    pub(crate) fn hold_action(&self) -> Action {
+        self.hold_action
+    }
+    
+    pub(crate) fn tap_action(&self) -> Action {
+        self.tap_action
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SingleHold {
+    pub key_event: KeyEvent,
+    pub key_action: KeyAction,
+    pub pressed_time: Instant,
+    //initial -> tap -> post tap -> release
+    pub state: TapHoldState,
+}
+
+
+impl SingleHold {
+    pub(crate) fn update_state(&mut self, new_state: TapHoldState) {
+        self.state = new_state
+    }
 }

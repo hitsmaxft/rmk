@@ -14,7 +14,7 @@ pub use esp_config::BleBatteryConfig;
 pub use nrf_config::BleBatteryConfig;
 
 use crate::combo::{Combo, COMBO_MAX_NUM};
-use crate::event::{Event, KeyEvent, PressedKeyEvent};
+use crate::event::{Event, KeyEvent, PressedTapHold};
 use crate::fork::{Fork, FORK_MAX_NUM};
 use crate::hid::Report;
 use crate::light::LedIndicator;
