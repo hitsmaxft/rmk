@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{action::Action, input_device::rotary_encoder::Direction};
 use crate::action::KeyAction;
+use crate::keyboard::Keyboard;
 use crate::keycode::KeyCode::No;
 
 /// Raw events from input devices and keyboards
@@ -102,16 +103,24 @@ pub struct KeyEvent {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HoldingKey {
     TapHold(PressedTapHold),
-    Tapping(SingleHold),
+    Tapping(BufferedPressEvent),
 }
 
-impl HoldingKey{
+
+pub trait HoldingKeyTrait {
+    fn update_state(&mut self, new_state: TapHoldState);
+    fn press_time(& self) -> Instant;
+    fn state(&self) -> TapHoldState;
+}
+
+impl HoldingKey {
     pub(crate) fn start_time(&self) -> Instant {
         match  self {
             HoldingKey::TapHold(h) => h.pressed_time,
             HoldingKey::Tapping(h) => h.pressed_time,
         }
     }
+
     pub(crate) fn key_event(&self) -> KeyEvent {
 
         match  self {
@@ -119,11 +128,51 @@ impl HoldingKey{
             HoldingKey::Tapping(h) => h.key_event,
         }
     }
+
+    pub(crate) fn is_tap_hold(&self) -> bool {
+
+        match  self {
+            HoldingKey::TapHold(h) => true,
+            _ => false,
+        }
+    }
 }
 
-pub trait HoldingKeyTrait {
-    fn update_state(&mut self, new_state: TapHoldState);
-    fn press_time(& self) -> Instant;
+impl HoldingKeyTrait for HoldingKey {
+    fn update_state(&mut self, new_state: TapHoldState) {
+
+        match self {
+            HoldingKey::TapHold(h) => {
+                h.state = new_state;
+            }
+            HoldingKey::Tapping(t) => {
+                t.state = new_state;
+            }
+        }
+    }
+
+    fn press_time(&self) -> Instant {
+        match self {
+            HoldingKey::TapHold(h) => {
+                h.pressed_time
+            }
+            HoldingKey::Tapping(t) => {
+                t.pressed_time
+            }
+        }
+    }
+
+    fn state(&self) -> TapHoldState {
+        match self {
+            HoldingKey::TapHold(h) => {
+                h.state
+            }
+            HoldingKey::Tapping(t) => {
+                t.state
+            }
+        }
+
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,25 +205,36 @@ pub struct PressedTapHold {
     pub state: TapHoldState,
 }
 
-impl PressedTapHold {
-    pub(crate) fn update_state(&mut self, new_state: TapHoldState) {
-        self.state = new_state
-    }
-
+impl  PressedTapHold {
     const NO: Action = Action::Key(No);
 
-    pub(crate) fn hold_action(&self) -> Action {
+    pub(crate)  fn hold_action(&self) -> Action {
         self.hold_action
     }
-    
+
     pub(crate) fn tap_action(&self) -> Action {
         self.tap_action
     }
 }
+impl HoldingKeyTrait for PressedTapHold {
+    fn update_state(&mut self, new_state: TapHoldState) {
+        self.state = new_state
+    }
 
+
+    fn press_time(&self) -> Instant {
+        self.pressed_time
+    }
+
+    fn state(&self) -> TapHoldState {
+        self.state
+    }
+}
+
+//buffered pressing key event while TapHolding
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct SingleHold {
+pub struct BufferedPressEvent {
     pub key_event: KeyEvent,
     pub key_action: KeyAction,
     pub pressed_time: Instant,
@@ -183,8 +243,16 @@ pub struct SingleHold {
 }
 
 
-impl SingleHold {
-    pub(crate) fn update_state(&mut self, new_state: TapHoldState) {
+impl HoldingKeyTrait for BufferedPressEvent {
+    fn update_state(&mut self, new_state: TapHoldState) {
         self.state = new_state
+    }
+
+    fn press_time(&self) -> Instant {
+        self.pressed_time
+    }
+
+    fn state(&self) -> TapHoldState {
+        self.state
     }
 }

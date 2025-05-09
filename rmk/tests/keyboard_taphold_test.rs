@@ -4,7 +4,6 @@ use embassy_futures::block_on;
 use embassy_time::Duration;
 use rusty_fork::rusty_fork_test;
 use std::cell::RefCell;
-
 use rmk::{
     config::{BehaviorConfig, TapHoldConfig},
     k,
@@ -88,6 +87,7 @@ rusty_fork_test! {
             let expected_reports = key_report![
                 //tap on a
                 [2, [0, 0, 0, 0, 0, 0]],
+                [0, [0, 0, 0, 0, 0, 0]],
             ];
 
             run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
@@ -176,12 +176,13 @@ rusty_fork_test! {
 
 
     //normal tap hold tests
-
     #[test]
-    fn test_tap_hold_key_mixed_release_eager() {
-            // eager hold
+    fn test_tap_hold_key_release_rolling() {
+        // eager hold
         let main = async {
             let mut keyboard = create_test_keyboard_with_config(BehaviorConfig {
+                //perfer hold
+                tap_hold:get_th_config_for_permissive_hold_test(),
                     .. BehaviorConfig::default()
                 });
 
@@ -195,12 +196,11 @@ rusty_fork_test! {
                 [2, 3, false, 100],  //  press d
             ];
             let expected_reports = key_report![
-                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]],
-                [KC_LSHIFT | KC_LGUI, [0, 0, 0, 0, 0, 0]],
-                [KC_LSHIFT | KC_LGUI,  [kc8!(D), 0, 0, 0, 0, 0]],
-
-                [KC_LGUI , [ kc8!(D), 0, 0, 0, 0, 0]],
-                [0 , [ kc8!(D), 0, 0, 0, 0, 0]],
+                [0, [kc8!(A), 0, 0, 0, 0, 0]],
+                [0, [0, 0, 0, 0, 0, 0]],
+                [0, [kc8!(S), 0, 0, 0, 0, 0]],
+                [0, [0, 0, 0, 0, 0, 0]],
+                [0, [kc8!(D), 0, 0, 0, 0, 0]],
                 [0, [0, 0, 0, 0, 0, 0]],
             ];
 
@@ -234,13 +234,13 @@ rusty_fork_test! {
                 [KC_LSHIFT, [0, 0, 0, 0, 0, 0]], // #0
                 [KC_LSHIFT | KC_LGUI, [0, 0, 0, 0, 0, 0]],
                 [KC_LSHIFT | KC_LGUI,  [kc8!(D), 0, 0, 0, 0, 0]],
-
-                [KC_LGUI , [ kc8!(D), 0, 0, 0, 0, 0]],
-                [0 , [ kc8!(D), 0, 0, 0, 0, 0]],
+                [KC_LSHIFT | KC_LGUI, [0, 0, 0, 0, 0, 0]],
+                [KC_LGUI, [ 0, 0, 0, 0, 0, 0]],
                 [0, [0, 0, 0, 0, 0, 0]],
             ];
 
             run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
+
         };
         block_on(main);
     }
@@ -282,7 +282,7 @@ rusty_fork_test! {
         let main = async {
             let mut keyboard = create_test_keyboard_with_config(
                 BehaviorConfig {
-                    tap_hold: get_th_config_for_test(),
+                    tap_hold: get_th_config_for_permissive_hold_test(),
                     ..BehaviorConfig::default()
                 }
             );
@@ -294,17 +294,6 @@ rusty_fork_test! {
                 [2, 1, false, 20], // -A
                 [2, 8, false, 50],  // -k
 
-                [2, 1, true, 200], // +th!(A,shift)
-                [2, 5, true, 50],  // +g
-                [2, 1, false, 20], // -A
-                [2, 5, false, 50],  // -g
-
-                [2, 1, true, 200],  // +th!(A,shift)
-                [2, 2, true, 10], // +th!(S,lgui)
-                [2, 8, true, 50],  // +k
-                [2, 1, false, 20], // -A // rolling release should ignore hold
-                [2, 8, false, 50], // -k
-                [2, 2, false, 400], // -s
             ];
             let expected_reports = key_report![
                 // chord hold , should become (shift x)
@@ -313,16 +302,72 @@ rusty_fork_test! {
                 [0, [kc8!(K), 0, 0, 0, 0, 0]],
                 [0, [0, 0, 0, 0, 0, 0]],
 
+            ];
+
+            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn test_tap_hold_key_chord_same_hand() {
+        //core case
+        //should buffer next key and output
+        let main = async {
+            let mut keyboard = create_test_keyboard_with_config(
+                BehaviorConfig {
+                    tap_hold: get_th_config_for_permissive_hold_test(),
+                    ..BehaviorConfig::default()
+                }
+            );
+
+            // rolling A , then ctrl d
+            let sequence = key_sequence![
+                [2, 1, true, 200], // +th!(A,shift)
+                [2, 5, true, 50],  // +g
+                [2, 1, false, 20], // -A
+                [2, 5, false, 50],  // -g
+
+            ];
+            let expected_reports = key_report![
                 // non chord hold
                 [0, [kc8!(A), 0, 0, 0, 0, 0]], //4
                 [0, [0, 0, 0, 0, 0, 0]],
                 [0, [kc8!(G), 0, 0, 0, 0, 0]],
-                [0, [kc8!(G), 0, 0, 0, 0, 0]],
                 [0, [0, 0, 0, 0, 0, 0]],
+            ];
 
+            run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn test_tap_hold_key_chord_2() {
+        let main = async {
+            let mut keyboard = create_test_keyboard_with_config(
+                BehaviorConfig {
+                    tap_hold: get_th_config_for_test(),
+                    ..BehaviorConfig::default()
+                }
+            );
+
+            // rolling A , then ctrl d
+            let sequence = key_sequence![
+                [2, 1, true, 200],  // +th!(A,shift)
+                [2, 2, true, 10], // +th!(S,lgui)
+                // cross hand , fire hold
+                [2, 8, true, 50],  // +k
+                [2, 1, false, 20], // -A
+                [2, 8, false, 50], // -k
+                [2, 2, false, 400], // -s
+            ];
+            let expected_reports = key_report![
                 //multi mod chord hold
+                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]],
                 [KC_LSHIFT| KC_LGUI, [0, 0, 0, 0, 0, 0]],
-                [KC_LGUI, [kc8!(K), 0, 0, 0, 0, 0]],
+                [KC_LSHIFT| KC_LGUI, [kc8!(K), 0, 0, 0, 0, 0]],
+                [ KC_LGUI, [kc8!(K), 0, 0, 0, 0, 0]],
                 [KC_LGUI, [0, 0, 0, 0, 0, 0]],
                 [0, [0, 0, 0, 0, 0, 0]],
             ];
