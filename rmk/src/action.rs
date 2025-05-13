@@ -88,6 +88,7 @@ pub enum KeyAction {
     ///
     /// Serialized as 1|BasicAction(7bits)|BasicAction(8bits).
     TapHold(Action, Action),
+
 }
 
 impl KeyAction {

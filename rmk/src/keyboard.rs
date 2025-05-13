@@ -18,7 +18,7 @@ use crate::fork::{ActiveFork, StateBits, FORK_MAX_NUM};
 use crate::hid::Report;
 use crate::hid_state::{HidModifiers, HidMouseButtons};
 use crate::input_device::Runnable;
-use crate::keyboard::HoldDecision::{ChordHold, CleanBuffer, Hold};
+use crate::keyboard::HoldDecision::{CrossHold, CleanBuffer, Hold};
 use crate::keyboard::LoopState::{Loop, Buffered, Stop};
 use crate::keyboard_macro::{MacroOperation, NUM_MACRO};
 use crate::keycode::{KeyCode, ModifierCombination};
@@ -37,17 +37,18 @@ enum LoopState{
 #[derive(Debug)]
 enum HoldDecision {
     Timeout,
-    CleanBuffer, // clean buffer key press
     Hold,
-    ChordHold,
+    Tap,
+    CrossHold,
     Buffering,
+    CleanBuffer, // clean buffer key press
     Ignore,
 }
 
 impl HoldDecision {
     fn is_hold(&self) -> bool {
         match self {
-            Timeout | Hold | ChordHold => true,
+            Timeout | Hold | CrossHold => true,
             _ => false,
         }
     }
@@ -490,7 +491,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                     if !hand.is_same(key_event) {
                         debug!("chordal hold hand: {:?}", hand);
                         // quick path, set to hold since here comes chord hold conflict
-                        return ChordHold;
+                        return CrossHold;
                     }
                 }
 
@@ -549,7 +550,8 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                 });
                 return Buffered;
             }
-            CleanBuffer | Hold | ChordHold => {
+            CleanBuffer | Hold | CrossHold => {
+                //TODO improve hold style
                 self.fire_all_holding_keys_into_press_action(decision, key_event).await;
             }
             _ => {
@@ -2195,29 +2197,35 @@ mod test {
                 KeyAction::TapHold(Action::Key(KeyCode::F), Action::Key(KeyCode::Again)),
             );
 
+            //hold ,should not output
             keyboard.process_inner(key_event(0, 0, true)).await; // hold tap f
             keyboard
                 .send_keyboard_report_with_resolved_modifiers(true)
                 .await;
-            // hold a ,should not output
             assert_eq!(keyboard.held_keycodes[0], KeyCode::No);
 
+            // tap q ,should output q
             keyboard.process_inner(key_event(1, 1, true)).await; // pre q
-            // hold q ,should output q
+
             assert_eq!(keyboard.held_keycodes[0], KeyCode::Q);
 
             keyboard.process_inner(key_event(1, 1, false)).await;
+
             // release q, should outputs nothing
             assert_eq!(keyboard.held_keycodes[0], KeyCode::No);
 
             // release again
-            keyboard.process_inner(key_event(0, 0, false)).await; //
+            keyboard.process_inner(key_event(0, 0, false)).await;
 
+            info!("hold again, and repeat kc!(Q)");
             // press and release hold key
             keyboard.process_inner(key_event(0, 0, true)).await; // press again
+
             //force timeout
-            keyboard.fire_all_holding_keys_into_press_action(Timeout, key_event(0,0 false)).await;
+            keyboard.fire_all_holding_keys_into_press_action(Timeout, key_event(0,0, false)).await;
+
             assert_eq!(keyboard.held_keycodes[0], KeyCode::Q);
+
             keyboard.process_inner(key_event(0, 0, false)).await;
             // Press S key
             keyboard.process_inner(key_event(1, 2, true)).await;
