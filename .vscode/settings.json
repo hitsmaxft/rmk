@@ -5,8 +5,6 @@
     },
     "cortex-debug.variableUseNaturalFormat": false,
     "rust-analyzer.check.allTargets": false,
-    "rust-analyzer.check.noDefaultFeatures": true,
-    "rust-analyzer.cargo.noDefaultFeatures": true,
     "rust-analyzer.showUnlinkedFileNotification": false,
     // Uncomment the target of your chip.
     // "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
@@ -57,5 +55,10 @@
         // "examples/use_rust/stm32f1/Cargo.toml",
         // "examples/use_rust/stm32f4/Cargo.toml",
         // "examples/use_rust/stm32h7/Cargo.toml",
+    ],
+    // "rust-analyzer.check.noDefaultFeatures": true,
+    // "rust-analyzer.cargo.noDefaultFeatures": true,
+    "rust-analyzer.cargo.extraArgs": [
+        "--no-default-features"
     ],
 }
