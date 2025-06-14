@@ -318,11 +318,12 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                             self.holding_buffer.push(hold_key).ok();
                         }
                         _ => {
+                            // post release maybe, there should not be other state right now
                             //release
                             self.process_key_action_normal(event.hold_action(), event.key_event)
                                 .await;
                             //marked as post hold
-                            debug!("{:?} post hold timeout processed", event.key_event);
+                            debug!("{:?} !fallback: post hold key in state", event.key_event);
                         }
                     }
                 }
@@ -1833,7 +1834,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
     // save pressed tap hold key into waiting list
     fn tap_hold_save_new_pressed(&mut self, pressedKeyEvent: PressedTapHold) {
         // If the slot is found, update the key in the slot
-        debug!("Save TapHold : {:?}", pressedKeyEvent);
+        debug!("Save TapHold : {:?}", pressedKeyEvent.key_event);
         let _ = self.holding_buffer.push(HoldingKey::TapHold(pressedKeyEvent));
 
         self.chord_state = Some(ChordHoldState::create(pressedKeyEvent.key_event, ROW, COL));

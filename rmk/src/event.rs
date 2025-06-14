@@ -187,17 +187,18 @@ impl HoldingKeyTrait for HoldingKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TapHoldState {
-    //happen after press event arrives
+    //happen after a press event arrives
     Initial,
     //tapping event
     Tap,
-    //release tapping event
+    //state after a tap key is released 
     PostTap,
-    //holding event
+    //state that a tap hold key is delete as hold
     Hold,
     //release holding event
     PostHold,
-    //reserved
+    //reserved:  a key need be release but still in the queue
+    //should be clean in the main loop, no matter
     Release,
 }
 
