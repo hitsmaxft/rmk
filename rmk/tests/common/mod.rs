@@ -107,10 +107,15 @@ pub async fn run_key_sequence_test<'a, const N: usize, const ROW: usize, const C
                     }
                 }
             }
+
             // Set done flag after all reports are verified
             *REPORTS_DONE.lock().await = true;
         }
+
     );
+    if keyboard.get_buffer_size() >0 {
+        panic!("leak after buffer cleanup, failed");
+    }
 }
 
 #[rustfmt::skip]

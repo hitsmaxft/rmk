@@ -266,9 +266,7 @@ mod tap_hold_test {
                     [2, 1, true, 10], // Press th!(A,shift)
                     [2, 2, true, 30], //  press th!(S,lgui)
                     [2, 3, true, 30],  //  press d
-                    [2, 3, false, 10],  // Release d
-                    // eager hold and output
-
+                    [2, 3, false, 10],  // Release d, active permissive hold
                     [2, 1, false, 50], // Release A
                     [2, 2, false, 100], // Release s
                 ];
@@ -287,6 +285,7 @@ mod tap_hold_test {
             };
             block_on(main);
         }
+
 
         #[test]
         fn test_tap_hold_hold_on_smesh_key_press() {
@@ -394,7 +393,6 @@ mod tap_hold_test {
                     [0, [0, 0, 0, 0, 0, 0]],
 
                 ];
-
                 run_key_sequence_test(&mut keyboard, &sequence, expected_reports).await;
             };
             block_on(main);
