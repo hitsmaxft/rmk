@@ -644,6 +644,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                 // Because the layer/keymap state might be changed after `fire_holding_keys`,
                 // we need to get the current key action again
                 original_key_action = self.keymap.borrow_mut().get_action_with_layer_cache(event);
+                self.chord_state = None
             }
             _ => {
                 error!("Unexpected tap hold decision {:?}", decision);
@@ -1995,6 +1996,9 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         // Press time of current key
         let pressed_time = self.get_timer_value(event).unwrap_or(Instant::now());
 
+        // Reset chord state
+        self.chord_state = None;
+
         let hold_keys_to_flush: Vec<_, HOLD_BUFFER_SIZE> = self
             .holding_buffer
             .iter()
@@ -2269,9 +2273,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             "[TAP-HOLD] After flush keys, current hold buffer: {:?}",
             self.holding_buffer
         );
-
-        // Reset chord state
-        self.chord_state = None;
     }
 
     /// When a key is pressed, add it to the holding buffer,
@@ -2289,7 +2290,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         match action {
             KeyAction::TapHold(_, _) => {
                 // If this is the first tap-hold key, initialize the chord state for possible chordal hold detection.
-
                 if self.keymap.borrow().behavior.tap_hold.chordal_hold && self.chord_state.is_none() {
                     debug!("chordal hold enabled, create chord state for key {:?}", event);
                     if let KeyboardEventPos::Key(pos) = event.pos {
