@@ -482,8 +482,28 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
     ///     - Check if permissive hold is enabled, if true, return `CleanBuffer`, fire buffered tap-hold keys. `CleanBuffer` means that the tap-hold decision is deferred to the next key press.
     /// - Otherwise, return `Ignore`, continue processing as normal.
     fn make_tap_hold_decision(&mut self, key_action: KeyAction, event: KeyboardEvent) -> TapHoldDecision {
-        let tap_hold_mode = self.keymap.borrow().behavior.tap_hold.mode;
+        let mut tap_hold_mode = self.keymap.borrow().behavior.tap_hold.mode;
         let chordal_hold = self.keymap.borrow().behavior.tap_hold.chordal_hold;
+        let enable_hrm = self.keymap.borrow().behavior.tap_hold.enable_hrm;
+
+        // Check if there's buffered layer_tap key but not self
+        let layer_tap_in_buffer = self.holding_buffer.iter().any(|h| match (h.action, h.state) {
+            (KeyAction::TapHold(_, Action::LayerOn(_)), TapHoldState::Tap(0)) => 
+                //ignore self
+                h.event.pos != event.pos,
+            _ => false,
+        });
+
+        // auto mode
+        if matches!(tap_hold_mode, TapHoldMode::Auto) && event.pressed {
+            if layer_tap_in_buffer {
+                tap_hold_mode = TapHoldMode::HoldOnOtherPress;
+            } else {
+                tap_hold_mode = TapHoldMode::PermissiveHold;
+            }
+        } else {
+            tap_hold_mode = TapHoldMode::PermissiveHold;
+        }
 
         // Check if there's buffered tap-hold key or tap-dance key
         let is_buffered = self.holding_buffer.iter().any(|i| match i.action {
@@ -496,8 +516,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             "\x1b[34m[TAP-HOLD] tap_hold_decision\x1b[0m: mode={:?}, is_tap_hold_buffered={}, is_pressed={}, action={:?}",
             tap_hold_mode, is_buffered, event.pressed, key_action
         );
-
-        let enable_hrm = self.keymap.borrow().behavior.tap_hold.enable_hrm;
 
         if is_buffered {
             if event.pressed {
@@ -531,11 +549,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                         };
                     }
                     TapHoldMode::HoldOnOtherPress => {
-                        // Check if there's buffered layer_tap key
-                        let layer_tap_in_buffer = self.holding_buffer.iter().any(|h| match (h.action, h.state) {
-                            (KeyAction::TapHold(_, Action::LayerOn(_)), TapHoldState::Tap(0)) => true,
-                            _ => false,
-                        });
                         // If HRM is enabled, the MT shouldn't be checked.
                         // So when `enabled_hrm == true`, check if there's layer_tap in buffer
                         if !enable_hrm || layer_tap_in_buffer {
@@ -546,12 +559,11 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                                     return TapHoldDecision::HoldOnOtherPress;
                                 }
                             }
-
                             // Check if the pressed key is NOT a tap-hold key
-                            if !matches!(key_action, KeyAction::TapHold(..)) {
-                                debug!("Hold on other key press triggered (non-tap-hold key pressed)");
-                                return TapHoldDecision::HoldOnOtherPress;
-                            }
+                            // if !matches!(key_action, KeyAction::TapHold(..)) {
+                            debug!("Hold on other key press triggered (pressed)");
+                            return TapHoldDecision::HoldOnOtherPress;
+                            // }
                         }
                     }
                     _ => (),

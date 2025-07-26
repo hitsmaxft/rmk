@@ -50,7 +50,11 @@ fn expand_tap_hold(tap_hold: &Option<TapHoldConfig>) -> proc_macro2::TokenStream
                 None => quote! {},
             };
             let tap_hold_mode = if let Some(true) = tap_hold.permissive_hold {
-                quote! { mode: ::rmk::config::TapHoldMode::PermissiveHold, }
+                if let Some(true) = tap_hold.hold_on_other_press {
+                    quote! { mode: ::rmk::config::TapHoldMode::Auto, }
+                } else {
+                    quote! { mode: ::rmk::config::TapHoldMode::PermissiveHold, }
+                }
             } else if let Some(true) = tap_hold.hold_on_other_press {
                 quote! { mode: ::rmk::config::TapHoldMode::HoldOnOtherPress, }
             } else {

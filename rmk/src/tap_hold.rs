@@ -18,6 +18,7 @@ pub enum TapHoldDecision {
     BufferTapping,
     // Hold on other key press
     HoldOnOtherPress,
+    LayerOnOnOtherPress,
     // Skip key action processing and buffer key event
     Buffering,
     // Continue processing as normal key event
