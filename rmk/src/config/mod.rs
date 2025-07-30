@@ -95,6 +95,9 @@ pub enum TapHoldMode {
     PermissiveHold,
     /// Trigger hold when any other non-tap-hold key is pressed
     HoldOnOtherPress,
+
+    Hold,
+    Auto,
 }
 
 /// Configurations for tap hold behavior

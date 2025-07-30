@@ -89,6 +89,7 @@ pub(crate) fn bind_interrupt_default(keyboard_config: &KeyboardTomlConfig) -> To
                     #tx_power
                     .central_count(1)?
                     .peripheral_count(1)?
+                    #tx_power
                     .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
                     .build(p, rng, mpsl, mem)
                 },
@@ -102,6 +103,7 @@ pub(crate) fn bind_interrupt_default(keyboard_config: &KeyboardTomlConfig) -> To
                     #tx_power
                     .peripheral_count(1)?
                     .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
+                    #tx_power
                     .build(p, rng, mpsl, mem)
                 },
             };

@@ -328,6 +328,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                                     "[TAP-HOLD] TIMEOUT: tap hold event now reach timeout and should become hold: {:?}",
                                     key
                                 );
+                                self.chord_state = None;
                                 self.fire_holding_keys(TapHoldDecision::Timeout, key.event).await;
                             }
                             Either::Second(event) => {
@@ -471,6 +472,16 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         }
     }
 
+    fn is_same_hand_chord(&mut self, event: KeyboardEvent) -> bool {
+        if self.keymap.borrow().behavior.tap_hold.chordal_hold {
+            // One-hand chord
+            if let Some(s) = &self.chord_state {
+                return s.is_same_hand(event.pos);
+            }
+        };
+        return false;
+    }
+
     /// Make tap-hold decision for the current key event.
     ///
     /// If there's buffered tap-hold key, calculate the next state of tap hold:
@@ -482,9 +493,36 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
     ///     - Check if permissive hold is enabled, if true, return `CleanBuffer`, fire buffered tap-hold keys. `CleanBuffer` means that the tap-hold decision is deferred to the next key press.
     /// - Otherwise, return `Ignore`, continue processing as normal.
     fn make_tap_hold_decision(&mut self, key_action: KeyAction, event: KeyboardEvent) -> TapHoldDecision {
-        let tap_hold_mode = self.keymap.borrow().behavior.tap_hold.mode;
-        let chordal_hold = self.keymap.borrow().behavior.tap_hold.chordal_hold;
+        let mut tap_hold_mode = self.keymap.borrow().behavior.tap_hold.mode;
+        let chordal_hold = self.is_same_hand_chord(event);
+        let enable_hrm = self.keymap.borrow().behavior.tap_hold.enable_hrm;
 
+        if matches!(key_action, KeyAction::Single(Action::LayerOn(_))) {
+            //ignore layer switching on taphold buffering and processing
+            return TapHoldDecision::Ignore;
+        }
+
+        // Check if there's buffered layer_tap key but not self
+        let layer_tap_in_buffer = self.holding_buffer.iter().any(|h| match (h.action, h.state) {
+            (KeyAction::TapHold(_, Action::LayerOn(_)), TapHoldState::Tap(0)) =>
+            //ignore self
+            {
+                h.event.pos != event.pos
+            }
+            _ => false,
+        });
+        // auto mode
+        if matches!(tap_hold_mode, TapHoldMode::Auto) {
+            if event.pressed {
+                if layer_tap_in_buffer {
+                    tap_hold_mode = TapHoldMode::HoldOnOtherPress;
+                } else {
+                    tap_hold_mode = TapHoldMode::PermissiveHold;
+                }
+            } else {
+                tap_hold_mode = TapHoldMode::PermissiveHold;
+            }
+        }
         // Check if there's buffered tap-hold key or tap-dance key
         let is_buffered = self.holding_buffer.iter().any(|i| match i.action {
             KeyAction::TapHold(_, _) => matches!(i.state, TapHoldState::Tap(_)),
@@ -497,33 +535,25 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             tap_hold_mode, is_buffered, event.pressed, key_action
         );
 
-        let enable_hrm = self.keymap.borrow().behavior.tap_hold.enable_hrm;
-
         if is_buffered {
             if event.pressed {
-                // New key pressed after a tap-hold key.
-
-                // 1. Check chordal hold
-                if chordal_hold {
-                    // One-hand chord
-                    if let Some(s) = &self.chord_state {
-                        if s.is_same_hand(event.pos) {
-                            debug!("match one-hand chord, buffering");
-                            return TapHoldDecision::Buffering;
-                        }
-                    }
-                }
-
                 match tap_hold_mode {
                     TapHoldMode::PermissiveHold => {
                         // Permissive hold checks the key release, so the pressed key should be buffered when pressed.
                         // Buffer pressed keys if permissive hold is enabled.
                         return match key_action {
-                            KeyAction::TapHold(_, _) | KeyAction::TapDance(_) => {
+                            KeyAction::TapDance(_) => {
                                 // Ignore following tap-hold keys, they will be always checked
                                 TapHoldDecision::Ignore
                             }
                             _ => {
+                                // if !matches!(key_action, KeyAction::TapHold(_, _)) {
+                                //     if chordal_hold {
+                                //         debug!("match chordal hold same hand: {:?}, fire tapping", self.chord_state);
+                                //         return TapHoldDecision::Buffered2Tap;
+                                //     }
+                                // }
+
                                 // Buffer keys and wait for key release
                                 debug!("key {:?} press down while BUFFERING, save it into buffer", key_action);
                                 TapHoldDecision::Buffering
@@ -531,30 +561,17 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                         };
                     }
                     TapHoldMode::HoldOnOtherPress => {
-                        // Check if there's buffered layer_tap key
-                        let layer_tap_in_buffer = self.holding_buffer.iter().any(|h| match (h.action, h.state) {
-                            (KeyAction::TapHold(_, Action::LayerOn(_)), TapHoldState::Tap(0)) => true,
-                            _ => false,
-                        });
                         // If HRM is enabled, the MT shouldn't be checked.
                         // So when `enabled_hrm == true`, check if there's layer_tap in buffer
                         if !enable_hrm || layer_tap_in_buffer {
-                            // Check two-hand chord
-                            if let Some(s) = &self.chord_state {
-                                if !s.is_same_hand(event.pos) {
-                                    debug!("Two-hand chord");
-                                    return TapHoldDecision::HoldOnOtherPress;
-                                }
-                            }
-
                             // Check if the pressed key is NOT a tap-hold key
-                            if !matches!(key_action, KeyAction::TapHold(..)) {
-                                debug!("Hold on other key press triggered (non-tap-hold key pressed)");
-                                return TapHoldDecision::HoldOnOtherPress;
-                            }
+                            // if !matches!(key_action, KeyAction::TapHold(..)) {
+                            debug!("Hold on other key press triggered (pressed)");
+                            return TapHoldDecision::HoldOnOtherPress;
+                            // }
                         }
                     }
-                    _ => (),
+                    _ => return TapHoldDecision::Ignore,
                 }
             } else {
                 // Key releasing while tap-holding
@@ -567,17 +584,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                             return TapHoldDecision::Ignore;
                         }
                         _ => {
-                            // Buffer keys and wait for key release
-                            if chordal_hold {
-                                // One-hand chord
-                                if let Some(s) = &self.chord_state {
-                                    if s.is_same_hand(event.pos) {
-                                        debug!("match chordal hold same hand: {:?}, fire tapping", self.chord_state);
-                                        return TapHoldDecision::BufferTapping;
-                                    }
-                                }
-                            }
-
                             if let KeyAction::Single(_) = key_action {
                                 // Check whether the key is pressed BEFORE the tap-hold/tap-dance key pressing
                                 // If so, it should be ignored
@@ -586,16 +592,20 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                                         && h.action == key_action
                                         && h.event.pos == event.pos
                                 }) {
+                                    debug!("ignore");
                                     return TapHoldDecision::Ignore;
                                 }
+                            } // Buffer keys and wait for key release
+                            if chordal_hold {
+                                return TapHoldDecision::Buffered2Tap
+                            } else {
+                                return TapHoldDecision::CleanBuffer;
                             }
-                            return TapHoldDecision::CleanBuffer;
                         }
                     }
                 };
             }
         }
-
         // Default decision
         TapHoldDecision::Ignore
     }
@@ -613,7 +623,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                 return LoopState::Queue;
             }
             TapHoldDecision::CleanBuffer
-            | TapHoldDecision::BufferTapping
+            | TapHoldDecision::Buffered2Tap
             | TapHoldDecision::Hold
             | TapHoldDecision::HoldOnOtherPress => {
                 // CleanBuffer: permissive hold is triggered by a key release
@@ -682,10 +692,13 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                     self.last_press = (event, false, Some(Instant::now()));
                 } else {
                     self.last_release = (event, false, Some(Instant::now()));
-                    self.chord_state = None;
                 }
             } else {
                 debug!("Record last pressed key event ignored: {:?}", event);
+            }
+
+            if self.holding_buffer.is_empty() {
+                self.chord_state = None
             }
         }
 
@@ -1129,8 +1142,8 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         };
 
         // Check chordal hold
-        // TODO: Use if-let-chain
         if let Some(c) = &self.chord_state {
+            // event from same hand , force tapping
             if event.pressed && c.is_same_hand(event.pos) {
                 // If chordal hold is enabled, and the chord state is some, check if the key is the same as the chord state
                 debug!("match chordal hold same hand, key {:?} should be tap", event);
@@ -1171,6 +1184,7 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         if event.pressed {
             // Save unprocessed key
             self.add_holding_key_to_buffer(event, KeyAction::TapHold(tap_action, hold_action), TapHoldState::Tap(0));
+
             return None;
         } else {
             // Release a tap-hold key, should check timeout for tap
@@ -2029,12 +2043,16 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                     KeyAction::TapHold(tap_action, hold_action) => {
                         if hold_key.event.pos == event.pos {
                             // The current tap-hold key updating
-                            let action = if reason == TapHoldDecision::Timeout {
-                                hold_action
-                            } else {
-                                tap_action
+                            let action = match reason {
+                                TapHoldDecision::Timeout => {
+                                    debug!(
+                                        "TapHold key {:?} becomes {:?} due to timeout",
+                                        hold_key.event, hold_action
+                                    );
+                                    hold_action
+                                }
+                                _ => tap_action,
                             };
-                            debug!("TapHold key {:?} becomes {:?} due to timeout", hold_key.event, action);
                             self.process_key_action_normal(action, hold_key.event).await;
                         } else if reason == TapHoldDecision::HoldOnOtherPress {
                             // Hold on other key press: ALL tap-hold keys become hold
@@ -2045,8 +2063,17 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                             self.process_key_action_normal(hold_action, hold_key.event).await;
                         } else if matches!(hold_key.state, TapHoldState::Tap(_)) && hold_key.pressed_time < pressed_time
                         {
-                            debug!("TapHold key {:?} becomes hold {:?}", hold_key.event, hold_action);
-                            self.process_key_action_normal(hold_action, hold_key.event).await;
+                            match reason {
+                                // force tapping
+                                TapHoldDecision::Buffered2Tap => {
+                                    debug!("BufferTapping key {:?} becomes tap {:?}", hold_key.event, tap_action);
+                                    self.process_key_action_normal(tap_action, hold_key.event).await;
+                                }
+                                _ => {
+                                    debug!("TapHold key {:?} becomes hold {:?}", hold_key.event, hold_action);
+                                    self.process_key_action_normal(hold_action, hold_key.event).await;
+                                }
+                            }
                         } else if matches!(hold_key.state, TapHoldState::Tap(_))
                             && hold_key.pressed_time >= pressed_time
                         {
@@ -2173,8 +2200,14 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                         } else if matches!(hold_key.state, TapHoldState::Tap(_)) && hold_key.pressed_time < pressed_time
                         {
                             // This key was pressed before the triggering key; mark as PostHold (hold resolved).
-                            debug!("Key {:?} become {:?}", hold_key.event, hold_action);
-                            hold_key.state = TapHoldState::PostHold(0);
+                            match reason {
+                                TapHoldDecision::Buffered2Tap => {
+                                    hold_key.state = TapHoldState::PostTap(0);
+                                }
+                                _ => {
+                                    hold_key.state = TapHoldState::PostHold(0);
+                                }
+                            }
                         } else if matches!(hold_key.state, TapHoldState::Tap(_))
                             && hold_key.pressed_time >= pressed_time
                         {
@@ -2258,9 +2291,6 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             "[TAP-HOLD] After flush keys, current hold buffer: {:?}",
             self.holding_buffer
         );
-
-        // Reset chord state
-        self.chord_state = None;
     }
 
     /// When a key is pressed, add it to the holding buffer,
@@ -2274,19 +2304,18 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             action,
         };
         debug!("Saving action: {:?} to holding buffer", new_item);
-        self.push_and_sort_buffers(new_item);
-        match action {
-            KeyAction::TapHold(_, _) => {
-                // If this is the first tap-hold key, initialize the chord state for possible chordal hold detection.
-                if self.keymap.borrow().behavior.tap_hold.chordal_hold && self.chord_state.is_none() {
-                    debug!("chordal hold enabled, create chord state for key {:?}", event);
-                    if let KeyboardEventPos::Key(pos) = event.pos {
-                        self.chord_state = Some(ChordHoldState::create(pos, ROW, COL));
-                    }
-                }
+
+        // If this is the first tap-hold key, initialize the chord state for possible chordal hold detection.
+        if self.keymap.borrow().behavior.tap_hold.chordal_hold
+            && self.chord_state.is_none()
+            && self.holding_buffer.is_empty()
+        {
+            debug!("Chordal hold enabled, create chord state for key {:?}", event);
+            if let KeyboardEventPos::Key(pos) = event.pos {
+                self.chord_state = Some(ChordHoldState::create(pos, ROW, COL));
             }
-            _ => {}
         }
+        self.push_and_sort_buffers(new_item);
     }
 
     /// Set the timer value for a key event

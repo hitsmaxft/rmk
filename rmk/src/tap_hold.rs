@@ -15,9 +15,10 @@ pub enum TapHoldDecision {
     // Chordal holding
     ChordHold,
     // A tap hold key is release as tap
-    BufferTapping,
+    Buffered2Tap,
     // Hold on other key press
     HoldOnOtherPress,
+    LayerOnOnOtherPress,
     // Skip key action processing and buffer key event
     Buffering,
     // Continue processing as normal key event

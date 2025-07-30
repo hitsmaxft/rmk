@@ -34,7 +34,7 @@ mod tap_hold_test {
     use rusty_fork::rusty_fork_test;
 
     use super::*;
-    use crate::common::{KC_LGUI, KC_LSHIFT, create_test_keyboard, create_test_keyboard_with_config, wrap_keymap};
+    use crate::common::{create_test_keyboard, create_test_keyboard_with_config, wrap_keymap, KC_LCTRL, KC_LGUI, KC_LSHIFT};
 
     rusty_fork_test! {
 
@@ -371,7 +371,7 @@ mod tap_hold_test {
         }
 
         #[test]
-        fn test_tap_hold_key_chord_cross_hand_should_be_hold() {
+        fn test_tap_hold_key_chord_oppsite_hand_should_be_hold() {
             key_sequence_test! {
                 keyboard: create_test_keyboard_with_config(
                     BehaviorConfig {
@@ -400,10 +400,56 @@ mod tap_hold_test {
         }
 
         #[test]
+        fn test_tap_hold_key_chord_same_abccba_should_be_tapping() {
+            key_sequence_test! {
+                keyboard: create_test_keyboard_with_config(BehaviorConfig {
+                    tap_hold: tap_hold_config_with_hrm_and_chordal_hold(),
+                    ..BehaviorConfig::default()
+                }),
+                sequence: [
+                    [2, 2, true, 20],  // Press MT(S)
+                    [2, 1, true, 20], // Press th!(A,shift)
+                    [2, 5, true, 20], // Press G
+                    [2, 5, false, 20], // Press G
+                    [2, 1, false, 20], // Release A
+                    [2, 2, false, 20], // Release S
+                ],
+                expected_reports: [
+                    [0, [kc_to_u8!(S), 0, 0, 0, 0, 0]], // Press S
+                    [0, [kc_to_u8!(S), kc_to_u8!(A), 0, 0, 0, 0]], // Press A
+                    [0, [kc_to_u8!(S), kc_to_u8!(A), kc_to_u8!(G), 0, 0, 0]], // Press A
+                    [0, [kc_to_u8!(S), kc_to_u8!(A), 0, 0, 0, 0]], // Press A
+                    [0, [kc_to_u8!(S), 0, 0, 0, 0, 0]], // Release A
+                    [0, [0, 0, 0, 0, 0, 0]], // Release S
+                ]
+            }
+        }
+        #[test]
+        fn test_tap_hold_key_chord_same_abba_should_be_tapping() {
+            key_sequence_test! {
+                keyboard: create_test_keyboard_with_config(BehaviorConfig {
+                    tap_hold: tap_hold_config_with_hrm_and_chordal_hold(),
+                    ..BehaviorConfig::default()
+                }),
+                sequence: [
+                    [2, 2, true, 20],  // Press MT(S, Gui)
+                    [2, 1, true, 20], // Press MT(A, Shift)
+                    [2, 1, false, 20], // Release A
+                    [2, 2, false, 20], // Release S
+                ],
+                expected_reports: [
+                    [0, [kc_to_u8!(S), 0, 0, 0, 0, 0]], // Press S
+                    [0, [kc_to_u8!(S), kc_to_u8!(A), 0, 0, 0, 0]], // Press A
+                    [0, [kc_to_u8!(S), 0, 0, 0, 0, 0]], // Release A
+                    [0, [0, 0, 0, 0, 0, 0]], //  Release S
+                ]
+            }
+        }
+        #[test]
         fn test_tap_hold_key_chord_reversed_cross_tap_should_be_tap() {
             key_sequence_test! {
                 keyboard: create_test_keyboard_with_config(BehaviorConfig {
-                    tap_hold: tap_hold_config_with_hrm_and_permissive_hold(),
+                    tap_hold: tap_hold_config_with_hrm_and_chordal_hold(),
                     ..BehaviorConfig::default()
                 }),
                 sequence: [
