@@ -32,6 +32,10 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             _ => unreachable!(),
         };
 
+        if self.held_buffer.keys.iter().filter(|k| matches!(k.action, KeyAction::Morse(_)) && matches!(k.state, KeyState::Held(0))).count()>0 {
+            return;
+        }
+
         // TODO: Now timeout cleans only non-morse keys in the buffer, do we need to clean all cleanable keys in the buffer?
         self.trigger_held_non_morse_keys().await;
     }
