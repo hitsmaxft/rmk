@@ -535,7 +535,13 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
         storage
     }
 
-    pub(crate) async fn run(&mut self) {
+    /// Run the flash task, persisting keymap and config changes.
+    ///
+    /// Public so firmware that composes its own task set can run this alongside
+    /// [`crate::host::run_host_communicate_task`]. Without it, Via/Vial edits
+    /// are applied in memory but never reach flash, and `FLASH_CHANNEL` fills up
+    /// with no consumer.
+    pub async fn run(&mut self) {
         let mut storage_cache = NoCache::new();
         loop {
             let info: FlashOperationMessage = FLASH_CHANNEL.receive().await;

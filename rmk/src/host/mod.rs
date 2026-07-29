@@ -15,8 +15,15 @@ use crate::descriptor::ViaReport;
 use crate::hid::{HidReaderTrait, HidWriterTrait};
 use crate::keymap::KeyMap;
 
+/// Run the host (Via/Vial) communication task over any `ViaReport` transport.
+///
+/// This is transport-agnostic on purpose: it only needs a reader/writer of
+/// `ViaReport` and is independent of how key reports reach the host. Firmware
+/// that composes its own task set — for example a keyboard whose HID output
+/// goes over a proprietary radio while Via/Vial stays on USB — can run this
+/// directly instead of going through [`crate::run_rmk`].
 #[cfg(feature = "vial")]
-pub(crate) async fn run_host_communicate_task<
+pub async fn run_host_communicate_task<
     'a,
     Rw: HidReaderTrait<ReportType = ViaReport> + HidWriterTrait<ReportType = ViaReport>,
     const ROW: usize,
@@ -33,7 +40,7 @@ pub(crate) async fn run_host_communicate_task<
 }
 
 #[cfg(not(feature = "vial"))]
-pub(crate) async fn run_host_communicate_task<
+pub async fn run_host_communicate_task<
     'a,
     Rw: HidReaderTrait<ReportType = ViaReport> + HidWriterTrait<ReportType = ViaReport>,
     const ROW: usize,

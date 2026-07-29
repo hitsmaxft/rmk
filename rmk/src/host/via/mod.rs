@@ -388,7 +388,11 @@ pub struct UsbVialReaderWriter<'a, 'd, D: Driver<'d>> {
 }
 
 impl<'a, 'd, D: Driver<'d>> UsbVialReaderWriter<'a, 'd, D> {
-    pub(crate) fn new(vial_reader_writer: &'a mut HidReaderWriter<'d, D, 32, 32>) -> Self {
+    /// Wrap a 32/32 USB HID reader/writer as a Via/Vial transport.
+    ///
+    /// Public so firmware that composes its own task set can pair this with
+    /// [`crate::host::run_host_communicate_task`].
+    pub fn new(vial_reader_writer: &'a mut HidReaderWriter<'d, D, 32, 32>) -> Self {
         Self { vial_reader_writer }
     }
 }
