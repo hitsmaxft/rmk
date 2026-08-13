@@ -62,8 +62,6 @@ use crate::{CONNECTION_STATE, run_keyboard};
 pub(crate) mod battery_service;
 pub(crate) mod ble_server;
 pub(crate) mod device_info;
-#[cfg(feature = "ble-acceptance-diagnostics")]
-pub(crate) mod diagnostics;
 #[cfg(feature = "host")]
 pub(crate) mod host_service;
 pub(crate) mod led;
@@ -537,8 +535,6 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     let system_control = server.composite_service.system_report;
 
     CONNECTION_STATE.store(ConnectionState::Connected.into(), Ordering::Release);
-    #[cfg(feature = "ble-acceptance-diagnostics")]
-    diagnostics::increment(diagnostics::CONNECTED);
     #[cfg(feature = "controller")]
     let mut connected = false;
     #[cfg(feature = "controller")]
@@ -548,22 +544,13 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::DISCONNECTED);
                 info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
             GattConnectionEvent::PairingComplete { security_level, bond } => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                {
-                    diagnostics::increment(diagnostics::PAIRING_COMPLETE);
-                    diagnostics::store(diagnostics::LAST_SECURITY_LEVEL, security_level as u32);
-                }
                 info!("[gatt] pairing complete: {:?}", security_level);
                 let profile = ACTIVE_PROFILE.load(Ordering::Acquire);
                 if let Some(bond_info) = bond {
-                    #[cfg(feature = "ble-acceptance-diagnostics")]
-                    diagnostics::store_ltk(diagnostics::PAIRING_LTK_BASE, bond_info.ltk);
                     let profile_info = ProfileInfo {
                         slot_num: profile,
                         info: bond_info,
@@ -578,18 +565,12 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                 }
             }
             GattConnectionEvent::PairingFailed(err) => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::PAIRING_FAILED);
                 error!("[gatt] pairing error: {:?}", err);
             }
             GattConnectionEvent::Gatt { event: gatt_event } => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::GATT_EVENTS);
                 let mut cccd_updated = false;
                 let result = match &gatt_event {
                     GattEvent::Read(event) => {
-                        #[cfg(feature = "ble-acceptance-diagnostics")]
-                        diagnostics::increment(diagnostics::GATT_READS);
                         if event.handle() == level.handle {
                             let value = server.get(&level);
                             debug!("Read GATT Event to Level: {:?}", value);
@@ -604,16 +585,9 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         }
                     }
                     GattEvent::Write(event) => {
-                        #[cfg(feature = "ble-acceptance-diagnostics")]
-                        diagnostics::increment(diagnostics::GATT_WRITES);
                         if event.handle() == output_keyboard.handle {
                             if event.data().len() == 1 {
                                 let led_indicator = LedIndicator::from_bits(event.data()[0]);
-                                #[cfg(feature = "ble-acceptance-diagnostics")]
-                                {
-                                    diagnostics::increment(diagnostics::LED_OUTPUT_WRITES);
-                                    diagnostics::store(diagnostics::LAST_LED_BITS, u32::from(event.data()[0]));
-                                }
                                 debug!("Got keyboard state: {:?}", led_indicator);
                                 LED_SIGNAL.signal(led_indicator);
                             } else {
@@ -632,8 +606,6 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         } {
                             // CCCD write event
                             cccd_updated = true;
-                            #[cfg(feature = "ble-acceptance-diagnostics")]
-                            diagnostics::increment(diagnostics::HID_CCCD_WRITES);
                         } else if {
                             let is_control_point = event.handle() == hid_control_point.handle;
                             #[cfg(not(feature = "ble-keyboard-only"))]
@@ -769,8 +741,6 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
             GattConnectionEvent::PassKeyDisplay(pass_key) => info!("[gatt] PassKeyDisplay: {:?}", pass_key),
             GattConnectionEvent::PassKeyConfirm(pass_key) => info!("[gatt] PassKeyConfirm: {:?}", pass_key),
             GattConnectionEvent::PassKeyInput => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::PASSKEY_INPUT);
                 warn!("[gatt] PassKeyInput event, should not happen")
             }
         }

@@ -258,36 +258,15 @@ impl<'a, C: Controller + ControllerCmdAsync<LeSetPhy>, P: PacketPool> ProfileMan
         use crate::read_storage;
         use crate::storage::{StorageData, StorageKeys};
 
-        #[cfg(feature = "ble-acceptance-diagnostics")]
-        crate::ble::diagnostics::begin_bond_load();
         self.bonded_devices.clear();
         for slot_num in 0..NUM_BLE_PROFILE {
             match storage.read_trouble_bond_info(slot_num as u8).await {
                 Ok(Some(info)) if !info.removed => {
-                    #[cfg(feature = "ble-acceptance-diagnostics")]
-                    {
-                        crate::ble::diagnostics::increment(crate::ble::diagnostics::LOADED_BONDS);
-                        crate::ble::diagnostics::store_ltk(crate::ble::diagnostics::LOADED_LTK_BASE, info.info.ltk);
-                        let address = info.info.identity.bd_addr.into_inner();
-                        crate::ble::diagnostics::store(
-                            crate::ble::diagnostics::LOADED_IDENTITY_LOW,
-                            u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
-                        );
-                        crate::ble::diagnostics::store(
-                            crate::ble::diagnostics::LOADED_METADATA,
-                            u32::from(info.slot_num)
-                                | (u32::from(info.info.is_bonded) << 8)
-                                | ((info.info.security_level as u32) << 16),
-                        );
-                    }
                     if let Err(e) = self.bonded_devices.push(info) {
                         error!("Failed to add bond info: {:?}", e);
                     }
                 }
-                Err(()) => {
-                    #[cfg(feature = "ble-acceptance-diagnostics")]
-                    crate::ble::diagnostics::increment(crate::ble::diagnostics::LOAD_ERRORS);
-                }
+                Err(()) => {}
                 _ => {}
             }
         }
@@ -341,8 +320,6 @@ impl<'a, C: Controller + ControllerCmdAsync<LeSetPhy>, P: PacketPool> ProfileMan
 
     /// Add/update bonding information
     pub async fn add_profile_info(&mut self, profile_info: ProfileInfo) {
-        #[cfg(feature = "ble-acceptance-diagnostics")]
-        crate::ble::diagnostics::increment(crate::ble::diagnostics::PROFILE_UPDATES);
         // Update profile information in memory
         if let Some(index) = self
             .bonded_devices

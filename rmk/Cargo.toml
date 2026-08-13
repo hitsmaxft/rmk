@@ -175,9 +175,6 @@ async_matrix = []
 ## Keep USB active while preferring BLE advertising and connections.
 ble-priority = []
 
-## Export persistent BLE pairing/GATT/HID counters for hardware acceptance.
-ble-acceptance-diagnostics = []
-
 ## Build only the standard keyboard HIDS service, without mouse/media/system reports.
 ble-keyboard-only = []
 

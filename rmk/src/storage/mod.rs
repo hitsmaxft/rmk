@@ -722,7 +722,7 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                 FlashOperationMessage::ProfileInfo(b) => {
                     debug!("Saving profile info: {:?}", b);
                     let data = StorageData::BondInfo(b.clone());
-                    let result = store_item::<u32, StorageData, _>(
+                    store_item::<u32, StorageData, _>(
                         &mut self.flash,
                         self.storage_range.clone(),
                         &mut storage_cache,
@@ -730,14 +730,7 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                         &get_bond_info_key(b.slot_num),
                         &data,
                     )
-                    .await;
-                    #[cfg(feature = "ble-acceptance-diagnostics")]
-                    if result.is_ok() {
-                        crate::ble::diagnostics::increment(crate::ble::diagnostics::PROFILE_FLASH_SUCCESSES);
-                    } else {
-                        crate::ble::diagnostics::increment(crate::ble::diagnostics::PROFILE_FLASH_FAILURES);
-                    }
-                    result
+                    .await
                 }
                 FlashOperationMessage::ComboTimeout(combo_timeout) => update_storage_field!(
                     &mut self.flash,

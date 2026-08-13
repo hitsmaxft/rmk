@@ -10,8 +10,6 @@ use super::battery_service::BatteryService;
 use super::device_info::DeviceConfigrmationService;
 #[cfg(feature = "host")]
 use super::host_service::HostService;
-#[cfg(feature = "ble-acceptance-diagnostics")]
-use crate::ble::diagnostics;
 use crate::channel::KEYBOARD_REPORT_CHANNEL;
 use crate::descriptor::KeyboardReport;
 #[cfg(not(feature = "ble-keyboard-only"))]
@@ -197,18 +195,12 @@ impl<P: PacketPool> HidWriterTrait for BleHidServer<'_, '_, '_, P> {
     async fn write_report(&mut self, report: Self::ReportType) -> Result<usize, HidError> {
         match report {
             Report::KeyboardReport(keyboard_report) => {
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::HID_NOTIFY_ATTEMPTS);
                 let mut buf = [0u8; 8];
                 let n = serialize(&mut buf, &keyboard_report).map_err(|_| HidError::ReportSerializeError)?;
                 self.input_keyboard.notify(self.conn, &buf).await.map_err(|e| {
-                    #[cfg(feature = "ble-acceptance-diagnostics")]
-                    diagnostics::increment(diagnostics::HID_NOTIFY_FAILURES);
                     error!("Failed to notify keyboard report: {:?}", e);
                     HidError::BleError
                 })?;
-                #[cfg(feature = "ble-acceptance-diagnostics")]
-                diagnostics::increment(diagnostics::HID_NOTIFY_SUCCESSES);
                 Ok(n)
             }
             #[cfg(not(feature = "ble-keyboard-only"))]
