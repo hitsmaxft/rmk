@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+#[cfg(all(not(feature = "_no_usb"), feature = "ble-keyboard-only"))]
+use crate::usb::UsbKeyboardOnlyWriter;
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetPhy};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::join::join;
@@ -8,7 +10,9 @@ use embassy_time::{Duration, Timer, with_timeout};
 use rand_core::{CryptoRng, RngCore};
 use rmk_types::led_indicator::LedIndicator;
 use trouble_host::prelude::appearance::human_interface_device::KEYBOARD;
-use trouble_host::prelude::service::{BATTERY, HUMAN_INTERFACE_DEVICE};
+#[cfg(not(feature = "ble-priority"))]
+use trouble_host::prelude::service::BATTERY;
+use trouble_host::prelude::service::HUMAN_INTERFACE_DEVICE;
 use trouble_host::prelude::*;
 #[cfg(feature = "host")]
 use {crate::ble::host_service::BleHostServer, crate::keymap::KeyMap, core::cell::RefCell};
@@ -17,19 +21,23 @@ use {
     crate::channel::{CONTROLLER_CHANNEL, send_controller_event, send_controller_event_new},
     crate::event::ControllerEvent,
 };
-#[cfg(all(feature = "host", not(feature = "_no_usb")))]
-use {crate::descriptor::ViaReport, crate::host::UsbHostReaderWriter};
+#[cfg(all(not(feature = "_no_usb"), not(feature = "ble-keyboard-only")))]
+use {
+    crate::descriptor::CompositeReport,
+    crate::usb::{UsbKeyboardWriter, add_usb_writer},
+};
 #[cfg(not(feature = "_no_usb"))]
 use {
-    crate::descriptor::{CompositeReport, KeyboardReport},
+    crate::descriptor::KeyboardReport,
     crate::light::UsbLedReader,
     crate::state::get_connection_type,
-    crate::usb::UsbKeyboardWriter,
     crate::usb::{USB_ENABLED, USB_REMOTE_WAKEUP, USB_SUSPENDED},
-    crate::usb::{add_usb_reader_writer, add_usb_writer, new_usb_builder},
+    crate::usb::{add_usb_reader_writer, new_usb_builder},
     embassy_futures::select::{Either, Either4, select4},
     embassy_usb::driver::Driver,
 };
+#[cfg(all(feature = "host", not(feature = "_no_usb")))]
+use {crate::descriptor::ViaReport, crate::host::UsbHostReaderWriter};
 #[cfg(feature = "storage")]
 use {
     crate::storage::{Storage, StorageData, StorageKeys},
@@ -54,6 +62,8 @@ use crate::{CONNECTION_STATE, run_keyboard};
 pub(crate) mod battery_service;
 pub(crate) mod ble_server;
 pub(crate) mod device_info;
+#[cfg(feature = "ble-acceptance-diagnostics")]
+pub(crate) mod diagnostics;
 #[cfg(feature = "host")]
 pub(crate) mod host_service;
 pub(crate) mod led;
@@ -127,13 +137,21 @@ pub(crate) async fn run_ble<
     }
 
     // Initialize usb device and usb hid reader/writer
-    #[cfg(not(feature = "_no_usb"))]
+    #[cfg(all(not(feature = "_no_usb"), not(feature = "ble-keyboard-only")))]
     let (mut _usb_builder, mut keyboard_reader, mut keyboard_writer, mut other_writer) = {
         let mut usb_builder: embassy_usb::Builder<'_, D> = new_usb_builder(usb_driver, rmk_config.device_config);
         let keyboard_reader_writer = add_usb_reader_writer!(&mut usb_builder, KeyboardReport, 1, 8);
         let other_writer = add_usb_writer!(&mut usb_builder, CompositeReport, 9);
         let (keyboard_reader, keyboard_writer) = keyboard_reader_writer.split();
         (usb_builder, keyboard_reader, keyboard_writer, other_writer)
+    };
+
+    #[cfg(all(not(feature = "_no_usb"), feature = "ble-keyboard-only"))]
+    let (mut _usb_builder, mut keyboard_reader, mut keyboard_writer) = {
+        let mut usb_builder: embassy_usb::Builder<'_, D> = new_usb_builder(usb_driver, rmk_config.device_config);
+        let keyboard_reader_writer = add_usb_reader_writer!(&mut usb_builder, KeyboardReport, 1, 8);
+        let (keyboard_reader, keyboard_writer) = keyboard_reader_writer.split();
+        (usb_builder, keyboard_reader, keyboard_writer)
     };
 
     #[cfg(all(not(feature = "_no_usb"), feature = "host"))]
@@ -166,6 +184,12 @@ pub(crate) async fn run_ble<
         send_controller_event_new(ControllerEvent::ConnectionType(CONNECTION_TYPE.load(Ordering::SeqCst)));
     }
 
+    // Some dual-mode products keep USB active for power and configuration but
+    // still want BLE advertising to win the transport race. The default RMK
+    // policy remains USB priority unless this feature is selected explicitly.
+    #[cfg(feature = "ble-priority")]
+    CONNECTION_TYPE.store(ConnectionType::Ble.into(), Ordering::SeqCst);
+
     // Create profile manager
     let mut profile_manager = ProfileManager::new(stack);
 
@@ -181,7 +205,7 @@ pub(crate) async fn run_ble<
     } = stack.build();
 
     info!("Starting advertising and GATT service");
-    let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+    let server = ble_server::init_server(GapConfig::Peripheral(PeripheralConfig {
         name: rmk_config.device_config.product_name,
         appearance: &appearance::human_interface_device::KEYBOARD,
     }))
@@ -253,7 +277,7 @@ pub(crate) async fn run_ble<
                 &mut controller_pub,
                 ControllerEvent::BleState(ACTIVE_PROFILE.load(Ordering::Relaxed), BleState::Advertising),
             );
-            let adv_fut = advertise(rmk_config.device_config.product_name, &mut peripheral, &server);
+            let adv_fut = advertise(rmk_config.device_config.product_name, &mut peripheral, server);
             // USB + BLE dual mode
             #[cfg(not(feature = "_no_usb"))]
             {
@@ -291,6 +315,9 @@ pub(crate) async fn run_ble<
                                     rmk_config.vial_config,
                                     USB_SUSPENDED.wait(),
                                     UsbLedReader::new(&mut keyboard_reader),
+                                    #[cfg(feature = "ble-keyboard-only")]
+                                    UsbKeyboardOnlyWriter::new(&mut keyboard_writer),
+                                    #[cfg(not(feature = "ble-keyboard-only"))]
                                     UsbKeyboardWriter::new(&mut keyboard_writer, &mut other_writer),
                                 );
                                 select(usb_fut, profile_manager.update_profile()).await;
@@ -301,7 +328,7 @@ pub(crate) async fn run_ble<
                                     USB_SUSPENDED.reset();
                                 }
                                 let ble_fut = run_ble_keyboard(
-                                    &server,
+                                    server,
                                     &conn,
                                     stack,
                                     #[cfg(feature = "host")]
@@ -352,6 +379,9 @@ pub(crate) async fn run_ble<
                             rmk_config.vial_config,
                             core::future::pending::<()>(), // Run forever until BLE connected
                             UsbLedReader::new(&mut keyboard_reader),
+                            #[cfg(feature = "ble-keyboard-only")]
+                            UsbKeyboardOnlyWriter::new(&mut keyboard_writer),
+                            #[cfg(not(feature = "ble-keyboard-only"))]
                             UsbKeyboardWriter::new(&mut keyboard_writer, &mut other_writer),
                         );
                         match select3(adv_fut, usb_fut, profile_manager.update_profile()).await {
@@ -359,7 +389,7 @@ pub(crate) async fn run_ble<
                                 info!("BLE connected, running BLE keyboard");
                                 select(
                                     run_ble_keyboard(
-                                        &server,
+                                        server,
                                         &conn,
                                         stack,
                                         #[cfg(feature = "host")]
@@ -409,7 +439,7 @@ pub(crate) async fn run_ble<
                     // BLE connected
                     select(
                         run_ble_keyboard(
-                            &server,
+                            server,
                             &conn,
                             &stack,
                             #[cfg(feature = "host")]
@@ -497,12 +527,18 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     #[cfg(feature = "host")]
     let host_control_point = server.host_service.hid_control_point;
     let battery_level = server.battery_service.level;
+    #[cfg(not(feature = "ble-keyboard-only"))]
     let mouse = server.composite_service.mouse_report;
+    #[cfg(not(feature = "ble-keyboard-only"))]
     let media = server.composite_service.media_report;
+    #[cfg(not(feature = "ble-keyboard-only"))]
     let media_control_point = server.composite_service.hid_control_point;
+    #[cfg(not(feature = "ble-keyboard-only"))]
     let system_control = server.composite_service.system_report;
 
     CONNECTION_STATE.store(ConnectionState::Connected.into(), Ordering::Release);
+    #[cfg(feature = "ble-acceptance-diagnostics")]
+    diagnostics::increment(diagnostics::CONNECTED);
     #[cfg(feature = "controller")]
     let mut connected = false;
     #[cfg(feature = "controller")]
@@ -512,13 +548,22 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
+                #[cfg(feature = "ble-acceptance-diagnostics")]
+                diagnostics::increment(diagnostics::DISCONNECTED);
                 info!("[gatt] disconnected: {:?}", reason);
                 break;
             }
             GattConnectionEvent::PairingComplete { security_level, bond } => {
+                #[cfg(feature = "ble-acceptance-diagnostics")]
+                {
+                    diagnostics::increment(diagnostics::PAIRING_COMPLETE);
+                    diagnostics::store(diagnostics::LAST_SECURITY_LEVEL, security_level as u32);
+                }
                 info!("[gatt] pairing complete: {:?}", security_level);
                 let profile = ACTIVE_PROFILE.load(Ordering::Acquire);
                 if let Some(bond_info) = bond {
+                    #[cfg(feature = "ble-acceptance-diagnostics")]
+                    diagnostics::store_ltk(diagnostics::PAIRING_LTK_BASE, bond_info.ltk);
                     let profile_info = ProfileInfo {
                         slot_num: profile,
                         info: bond_info,
@@ -533,12 +578,18 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                 }
             }
             GattConnectionEvent::PairingFailed(err) => {
+                #[cfg(feature = "ble-acceptance-diagnostics")]
+                diagnostics::increment(diagnostics::PAIRING_FAILED);
                 error!("[gatt] pairing error: {:?}", err);
             }
             GattConnectionEvent::Gatt { event: gatt_event } => {
+                #[cfg(feature = "ble-acceptance-diagnostics")]
+                diagnostics::increment(diagnostics::GATT_EVENTS);
                 let mut cccd_updated = false;
                 let result = match &gatt_event {
                     GattEvent::Read(event) => {
+                        #[cfg(feature = "ble-acceptance-diagnostics")]
+                        diagnostics::increment(diagnostics::GATT_READS);
                         if event.handle() == level.handle {
                             let value = server.get(&level);
                             debug!("Read GATT Event to Level: {:?}", value);
@@ -553,25 +604,42 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         }
                     }
                     GattEvent::Write(event) => {
+                        #[cfg(feature = "ble-acceptance-diagnostics")]
+                        diagnostics::increment(diagnostics::GATT_WRITES);
                         if event.handle() == output_keyboard.handle {
                             if event.data().len() == 1 {
                                 let led_indicator = LedIndicator::from_bits(event.data()[0]);
+                                #[cfg(feature = "ble-acceptance-diagnostics")]
+                                {
+                                    diagnostics::increment(diagnostics::LED_OUTPUT_WRITES);
+                                    diagnostics::store(diagnostics::LAST_LED_BITS, u32::from(event.data()[0]));
+                                }
                                 debug!("Got keyboard state: {:?}", led_indicator);
                                 LED_SIGNAL.signal(led_indicator);
                             } else {
                                 warn!("Wrong keyboard state data: {:?}", event.data());
                             }
-                        } else if event.handle() == input_keyboard.cccd_handle.expect("No CCCD for input keyboard")
-                            || event.handle() == mouse.cccd_handle.expect("No CCCD for mouse report")
-                            || event.handle() == media.cccd_handle.expect("No CCCD for media report")
-                            || event.handle() == system_control.cccd_handle.expect("No CCCD for system report")
-                            || event.handle() == battery_level.cccd_handle.expect("No CCCD for battery level")
-                        {
+                        } else if {
+                            let is_cccd = event.handle()
+                                == input_keyboard.cccd_handle.expect("No CCCD for input keyboard")
+                                || event.handle() == battery_level.cccd_handle.expect("No CCCD for battery level");
+                            #[cfg(not(feature = "ble-keyboard-only"))]
+                            let is_cccd = is_cccd
+                                || event.handle() == mouse.cccd_handle.expect("No CCCD for mouse report")
+                                || event.handle() == media.cccd_handle.expect("No CCCD for media report")
+                                || event.handle() == system_control.cccd_handle.expect("No CCCD for system report");
+                            is_cccd
+                        } {
                             // CCCD write event
                             cccd_updated = true;
-                        } else if event.handle() == hid_control_point.handle
-                            || event.handle() == media_control_point.handle
-                        {
+                            #[cfg(feature = "ble-acceptance-diagnostics")]
+                            diagnostics::increment(diagnostics::HID_CCCD_WRITES);
+                        } else if {
+                            let is_control_point = event.handle() == hid_control_point.handle;
+                            #[cfg(not(feature = "ble-keyboard-only"))]
+                            let is_control_point = is_control_point || event.handle() == media_control_point.handle;
+                            is_control_point
+                        } {
                             info!("Write GATT Event to Control Point: {:?}", event.handle());
                             #[cfg(feature = "split")]
                             if event.data().len() == 1 {
@@ -700,7 +768,11 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
             }
             GattConnectionEvent::PassKeyDisplay(pass_key) => info!("[gatt] PassKeyDisplay: {:?}", pass_key),
             GattConnectionEvent::PassKeyConfirm(pass_key) => info!("[gatt] PassKeyConfirm: {:?}", pass_key),
-            GattConnectionEvent::PassKeyInput => warn!("[gatt] PassKeyInput event, should not happen"),
+            GattConnectionEvent::PassKeyInput => {
+                #[cfg(feature = "ble-acceptance-diagnostics")]
+                diagnostics::increment(diagnostics::PASSKEY_INPUT);
+                warn!("[gatt] PassKeyInput event, should not happen")
+            }
         }
 
         // Publish the controller connected event
@@ -727,10 +799,14 @@ async fn advertise<'a, 'b, C: Controller>(
     // Wait for 10ms to ensure the USB is checked
     embassy_time::Timer::after_millis(10).await;
     let mut advertiser_data = [0; 31];
+    #[cfg(feature = "ble-priority")]
+    let advertised_services = [HUMAN_INTERFACE_DEVICE.to_le_bytes()];
+    #[cfg(not(feature = "ble-priority"))]
+    let advertised_services = [BATTERY.to_le_bytes(), HUMAN_INTERFACE_DEVICE.to_le_bytes()];
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[BATTERY.to_le_bytes(), HUMAN_INTERFACE_DEVICE.to_le_bytes()]),
+            AdStructure::ServiceUuids16(&advertised_services),
             AdStructure::CompleteLocalName(name.as_bytes()),
             AdStructure::Unknown {
                 ty: 0x19, // Appearance
@@ -740,6 +816,18 @@ async fn advertise<'a, 'b, C: Controller>(
         &mut advertiser_data[..],
     )?;
 
+    #[cfg(feature = "ble-priority")]
+    let advertise_config = AdvertisementParameters {
+        // The CH582M register-level controller currently exposes legacy LE 1M
+        // advertising. Keep the RMK acceptance demo on that proven PHY and
+        // cadence instead of requesting fields ignored by legacy HCI.
+        primary_phy: PhyKind::Le1M,
+        secondary_phy: PhyKind::Le1M,
+        interval_min: Duration::from_millis(100),
+        interval_max: Duration::from_millis(100),
+        ..Default::default()
+    };
+    #[cfg(not(feature = "ble-priority"))]
     let advertise_config = AdvertisementParameters {
         primary_phy: PhyKind::Le2M,
         secondary_phy: PhyKind::Le2M,

@@ -161,6 +161,49 @@ impl Default for ProfileInfo {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_info_preserves_bond_identity_ltk_and_cccd() {
+        let ltk = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        ];
+        let irk = [
+            0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00,
+        ];
+        let profile = ProfileInfo {
+            slot_num: 3,
+            removed: false,
+            info: BondInformation::new(
+                Identity {
+                    bd_addr: BdAddr::new([0x4d, 0x11, 0x82, 0x4b, 0x4c, 0xc0]),
+                    irk: Some(IdentityResolvingKey::from_le_bytes(irk)),
+                },
+                LongTermKey::from_le_bytes(ltk),
+                SecurityLevel::EncryptedAuthenticated,
+                true,
+            ),
+            cccd_table: CccdTable::new([(0x0029, 0x0001u16.into()); CCCD_TABLE_SIZE]),
+        };
+
+        let mut buffer = [0u8; 256];
+        let encoded = postcard::to_slice(&profile, &mut buffer).unwrap();
+        let decoded: ProfileInfo = postcard::from_bytes(encoded).unwrap();
+
+        assert_eq!(decoded.slot_num, profile.slot_num);
+        assert_eq!(decoded.removed, profile.removed);
+        assert_eq!(decoded.info.identity.bd_addr, profile.info.identity.bd_addr);
+        assert_eq!(decoded.info.identity.irk.unwrap().to_le_bytes(), irk);
+        assert_eq!(decoded.info.ltk.to_le_bytes(), ltk);
+        assert_eq!(decoded.info.security_level, SecurityLevel::EncryptedAuthenticated);
+        assert!(decoded.info.is_bonded);
+        assert_eq!(decoded.cccd_table.inner()[0].0, 0x0029);
+        assert_eq!(decoded.cccd_table.inner()[0].1.raw(), 0x0001);
+    }
+}
+
 /// BLE profile switch action
 pub(crate) enum BleProfileAction {
     SwitchProfile(u8),
@@ -215,13 +258,37 @@ impl<'a, C: Controller + ControllerCmdAsync<LeSetPhy>, P: PacketPool> ProfileMan
         use crate::read_storage;
         use crate::storage::{StorageData, StorageKeys};
 
+        #[cfg(feature = "ble-acceptance-diagnostics")]
+        crate::ble::diagnostics::begin_bond_load();
         self.bonded_devices.clear();
         for slot_num in 0..NUM_BLE_PROFILE {
-            if let Ok(Some(info)) = storage.read_trouble_bond_info(slot_num as u8).await
-                && !info.removed
-                && let Err(e) = self.bonded_devices.push(info)
-            {
-                error!("Failed to add bond info: {:?}", e);
+            match storage.read_trouble_bond_info(slot_num as u8).await {
+                Ok(Some(info)) if !info.removed => {
+                    #[cfg(feature = "ble-acceptance-diagnostics")]
+                    {
+                        crate::ble::diagnostics::increment(crate::ble::diagnostics::LOADED_BONDS);
+                        crate::ble::diagnostics::store_ltk(crate::ble::diagnostics::LOADED_LTK_BASE, info.info.ltk);
+                        let address = info.info.identity.bd_addr.into_inner();
+                        crate::ble::diagnostics::store(
+                            crate::ble::diagnostics::LOADED_IDENTITY_LOW,
+                            u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
+                        );
+                        crate::ble::diagnostics::store(
+                            crate::ble::diagnostics::LOADED_METADATA,
+                            u32::from(info.slot_num)
+                                | (u32::from(info.info.is_bonded) << 8)
+                                | ((info.info.security_level as u32) << 16),
+                        );
+                    }
+                    if let Err(e) = self.bonded_devices.push(info) {
+                        error!("Failed to add bond info: {:?}", e);
+                    }
+                }
+                Err(()) => {
+                    #[cfg(feature = "ble-acceptance-diagnostics")]
+                    crate::ble::diagnostics::increment(crate::ble::diagnostics::LOAD_ERRORS);
+                }
+                _ => {}
             }
         }
         debug!("Loaded {} bond info", self.bonded_devices.len());
@@ -274,6 +341,8 @@ impl<'a, C: Controller + ControllerCmdAsync<LeSetPhy>, P: PacketPool> ProfileMan
 
     /// Add/update bonding information
     pub async fn add_profile_info(&mut self, profile_info: ProfileInfo) {
+        #[cfg(feature = "ble-acceptance-diagnostics")]
+        crate::ble::diagnostics::increment(crate::ble::diagnostics::PROFILE_UPDATES);
         // Update profile information in memory
         if let Some(index) = self
             .bonded_devices

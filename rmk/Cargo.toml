@@ -53,11 +53,18 @@ paste = "1"
 
 # Optional dependencies
 # BLE dependencies
-trouble-host = { version = "0.5.1", features = [
+trouble-host = { version = "0.5.1", default-features = false, features = [
+    "peripheral",
     "gatt",
     "scan",
     "derive",
     "security",
+    "default-packet-pool",
+    "default-packet-pool-mtu-128",
+    "default-packet-pool-size-8",
+    "connection-event-queue-size-2",
+    "l2cap-rx-queue-size-1",
+    "l2cap-tx-queue-size-1",
 ], optional = true }
 rand_core = { version = "0.6", optional = true }
 bt-hci = { version = "0.6", optional = true }
@@ -164,6 +171,15 @@ std = [
 
 ## Enable async matrix scanning
 async_matrix = []
+
+## Keep USB active while preferring BLE advertising and connections.
+ble-priority = []
+
+## Export persistent BLE pairing/GATT/HID counters for hardware acceptance.
+ble-acceptance-diagnostics = []
+
+## Build only the standard keyboard HIDS service, without mouse/media/system reports.
+ble-keyboard-only = []
 
 ## Enable to use controllers to control other hardwares on the board or peripheral
 controller = []

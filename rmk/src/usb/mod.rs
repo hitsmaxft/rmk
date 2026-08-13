@@ -10,6 +10,7 @@ use static_cell::StaticCell;
 
 use crate::channel::KEYBOARD_REPORT_CHANNEL;
 use crate::config::DeviceConfig;
+#[cfg(not(feature = "ble-keyboard-only"))]
 use crate::descriptor::CompositeReportType;
 use crate::hid::{HidError, HidWriterTrait, Report, RunnableHidWriter};
 use crate::state::ConnectionState;
@@ -40,10 +41,12 @@ impl From<u8> for UsbState {
     }
 }
 
+#[cfg(not(feature = "ble-keyboard-only"))]
 pub(crate) struct UsbKeyboardWriter<'a, 'd, D: Driver<'d>> {
     pub(crate) keyboard_writer: &'a mut HidWriter<'d, D, 8>,
     pub(crate) other_writer: &'a mut HidWriter<'d, D, 9>,
 }
+#[cfg(not(feature = "ble-keyboard-only"))]
 impl<'a, 'd, D: Driver<'d>> UsbKeyboardWriter<'a, 'd, D> {
     pub(crate) fn new(keyboard_writer: &'a mut HidWriter<'d, D, 8>, other_writer: &'a mut HidWriter<'d, D, 9>) -> Self {
         Self {
@@ -53,12 +56,14 @@ impl<'a, 'd, D: Driver<'d>> UsbKeyboardWriter<'a, 'd, D> {
     }
 }
 
+#[cfg(not(feature = "ble-keyboard-only"))]
 impl<'d, D: Driver<'d>> RunnableHidWriter for UsbKeyboardWriter<'_, 'd, D> {
     async fn get_report(&mut self) -> Self::ReportType {
         KEYBOARD_REPORT_CHANNEL.receive().await
     }
 }
 
+#[cfg(not(feature = "ble-keyboard-only"))]
 impl<'d, D: Driver<'d>> HidWriterTrait for UsbKeyboardWriter<'_, 'd, D> {
     type ReportType = Report;
 
@@ -104,6 +109,47 @@ impl<'d, D: Driver<'d>> HidWriterTrait for UsbKeyboardWriter<'_, 'd, D> {
                     .map_err(HidError::UsbEndpointError)?;
                 Ok(n)
             }
+        }
+    }
+}
+
+/// USB HID writer for constrained keyboard-only builds. It intentionally
+/// allocates no composite mouse/media/system endpoint.
+#[cfg(feature = "ble-keyboard-only")]
+pub(crate) struct UsbKeyboardOnlyWriter<'a, 'd, D: Driver<'d>> {
+    keyboard_writer: &'a mut HidWriter<'d, D, 8>,
+}
+
+#[cfg(feature = "ble-keyboard-only")]
+impl<'a, 'd, D: Driver<'d>> UsbKeyboardOnlyWriter<'a, 'd, D> {
+    pub(crate) fn new(keyboard_writer: &'a mut HidWriter<'d, D, 8>) -> Self {
+        Self { keyboard_writer }
+    }
+}
+
+#[cfg(feature = "ble-keyboard-only")]
+impl<'d, D: Driver<'d>> RunnableHidWriter for UsbKeyboardOnlyWriter<'_, 'd, D> {
+    async fn get_report(&mut self) -> Self::ReportType {
+        KEYBOARD_REPORT_CHANNEL.receive().await
+    }
+}
+
+#[cfg(feature = "ble-keyboard-only")]
+impl<'d, D: Driver<'d>> HidWriterTrait for UsbKeyboardOnlyWriter<'_, 'd, D> {
+    type ReportType = Report;
+
+    async fn write_report(&mut self, report: Self::ReportType) -> Result<usize, HidError> {
+        match report {
+            Report::KeyboardReport(keyboard_report) => {
+                let mut buf = [0u8; 8];
+                let n = serialize(&mut buf, &keyboard_report).map_err(|_| HidError::ReportSerializeError)?;
+                self.keyboard_writer
+                    .write(&buf[..n])
+                    .await
+                    .map_err(HidError::UsbEndpointError)?;
+                Ok(n)
+            }
+            _ => Err(HidError::UsbDisabled),
         }
     }
 }
@@ -164,6 +210,7 @@ macro_rules! add_usb_logger {
     }};
 }
 
+#[cfg(not(feature = "ble-keyboard-only"))]
 macro_rules! add_usb_writer {
     ($usb_builder:expr, $descriptor:ty, $n:expr) => {{
         // Initialize hid writer
@@ -216,7 +263,9 @@ macro_rules! add_usb_reader_writer {
 
 #[cfg(feature = "usb_log")]
 pub(crate) use add_usb_logger;
-pub(crate) use {add_usb_reader_writer, add_usb_writer};
+pub(crate) use add_usb_reader_writer;
+#[cfg(not(feature = "ble-keyboard-only"))]
+pub(crate) use add_usb_writer;
 
 pub(crate) struct UsbRequestHandler {}
 
