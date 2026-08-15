@@ -99,11 +99,12 @@ pub async fn build_ble_stack<
     C: Controller + ControllerCmdAsync<LeSetPhy>,
     P: PacketPool,
     RNG: RngCore + CryptoRng,
+    const L2CAP_CHANNELS: usize,
 >(
     controller: C,
     host_address: [u8; 6],
     random_generator: &mut RNG,
-    resources: &'a mut HostResources<P, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX>,
+    resources: &'a mut HostResources<P, CONNECTIONS_MAX, L2CAP_CHANNELS>,
 ) -> Stack<'a, C, P> {
     // Initialize trouble host stack
     trouble_host::new(controller, resources)
@@ -111,7 +112,7 @@ pub async fn build_ble_stack<
         .set_random_generator_seed(random_generator)
 }
 
-/// Run the BLE stack.
+/// Run the BLE stack with the host runner in the same future.
 pub(crate) async fn run_ble<
     'a,
     'b,
@@ -127,7 +128,84 @@ pub(crate) async fn run_ble<
     #[cfg(not(feature = "_no_usb"))] usb_driver: D,
     stack: &'b Stack<'b, C, DefaultPacketPool>,
     #[cfg(feature = "storage")] storage: &mut Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>,
+    rmk_config: RmkConfig<'static>,
+) {
+    let Host { peripheral, runner, .. } = stack.build();
+    run_ble_inner(
+        #[cfg(feature = "host")]
+        keymap,
+        #[cfg(not(feature = "_no_usb"))]
+        usb_driver,
+        stack,
+        #[cfg(feature = "storage")]
+        storage,
+        rmk_config,
+        peripheral,
+        ble_task(runner),
+    )
+    .await;
+}
+
+/// Run RMK's BLE/USB application loops when the Trouble host runner is
+/// already owned by an independent executor task.
+///
+/// Keeping controller event processing in its own task prevents synchronous
+/// security work from being nested below the USB, advertising and keyboard
+/// join tree. The caller must continuously poll the [`Runner`] obtained from
+/// the same [`Host`] as `peripheral`.
+pub async fn run_ble_with_external_runner<
+    'a,
+    'b,
+    C: Controller + ControllerCmdAsync<LeSetPhy> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    #[cfg(feature = "storage")] F: AsyncNorFlash,
+    #[cfg(not(feature = "_no_usb"))] D: Driver<'static>,
+    #[cfg(any(feature = "storage", feature = "host"))] const ROW: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const COL: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const NUM_LAYER: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const NUM_ENCODER: usize,
+>(
+    #[cfg(feature = "host")] keymap: &'a RefCell<KeyMap<'a, ROW, COL, NUM_LAYER, NUM_ENCODER>>,
+    #[cfg(not(feature = "_no_usb"))] usb_driver: D,
+    stack: &'b Stack<'b, C, DefaultPacketPool>,
+    #[cfg(feature = "storage")] storage: &mut Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>,
+    rmk_config: RmkConfig<'static>,
+    peripheral: Peripheral<'b, C, DefaultPacketPool>,
+) -> ! {
+    run_ble_inner(
+        #[cfg(feature = "host")]
+        keymap,
+        #[cfg(not(feature = "_no_usb"))]
+        usb_driver,
+        stack,
+        #[cfg(feature = "storage")]
+        storage,
+        rmk_config,
+        peripheral,
+        core::future::pending::<()>(),
+    )
+    .await;
+    unreachable!("RMK BLE application loop returned");
+}
+
+async fn run_ble_inner<
+    'a,
+    'b,
+    C: Controller + ControllerCmdAsync<LeSetPhy> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    #[cfg(feature = "storage")] F: AsyncNorFlash,
+    #[cfg(not(feature = "_no_usb"))] D: Driver<'static>,
+    R: core::future::Future<Output = ()>,
+    #[cfg(any(feature = "storage", feature = "host"))] const ROW: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const COL: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const NUM_LAYER: usize,
+    #[cfg(any(feature = "storage", feature = "host"))] const NUM_ENCODER: usize,
+>(
+    #[cfg(feature = "host")] keymap: &'a RefCell<KeyMap<'a, ROW, COL, NUM_LAYER, NUM_ENCODER>>,
+    #[cfg(not(feature = "_no_usb"))] usb_driver: D,
+    stack: &'b Stack<'b, C, DefaultPacketPool>,
+    #[cfg(feature = "storage")] storage: &mut Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>,
     #[cfg_attr(not(feature = "_nrf_ble"), allow(unused_mut))] mut rmk_config: RmkConfig<'static>,
+    mut peripheral: Peripheral<'b, C, DefaultPacketPool>,
+    runner_task: R,
 ) {
     #[cfg(feature = "_nrf_ble")]
     {
@@ -197,11 +275,6 @@ pub(crate) async fn run_ble<
     // Update bonding information in the stack
     profile_manager.update_stack_bonds();
 
-    // Build trouble host stack
-    let Host {
-        mut peripheral, runner, ..
-    } = stack.build();
-
     info!("Starting advertising and GATT service");
     let server = ble_server::init_server(GapConfig::Peripheral(PeripheralConfig {
         name: rmk_config.device_config.product_name,
@@ -252,17 +325,17 @@ pub(crate) async fn run_ble<
     };
 
     #[cfg(all(not(feature = "usb_log"), not(feature = "_no_usb")))]
-    let background_task = join(ble_task(runner), usb_task);
+    let background_task = join(runner_task, usb_task);
     #[cfg(all(feature = "usb_log", not(feature = "_no_usb")))]
     let background_task = join(
-        ble_task(runner),
+        runner_task,
         select(
             usb_task,
             embassy_usb_logger::with_class!(1024, log::LevelFilter::Debug, usb_logger),
         ),
     );
     #[cfg(feature = "_no_usb")]
-    let background_task = ble_task(runner);
+    let background_task = runner_task;
 
     // Main loop
     join(background_task, async {
