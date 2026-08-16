@@ -1,3 +1,5 @@
+#[path = "./build_hash.rs"]
+mod build_hash;
 #[path = "./build_common.rs"]
 mod common;
 
@@ -16,8 +18,10 @@ fn main() {
     // Ensure build.rs is re-run when files change
     // println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_hash.rs");
     println!("cargo:rerun-if-env-changed=KEYBOARD_TOML_PATH");
     println!("cargo:rerun-if-env-changed=VIAL_JSON_PATH");
+    println!("cargo:rerun-if-env-changed=RMK_BUILD_HASH");
 
     // Read keyboard.toml if it's present
     let user_config_str = if let Ok(toml_path) = std::env::var("KEYBOARD_TOML_PATH") {
@@ -78,6 +82,10 @@ fn get_constants_str(constants: RmkConstantsConfig) -> String {
 }
 
 fn compute_build_hash() -> u32 {
+    if let Ok(value) = env::var("RMK_BUILD_HASH") {
+        return build_hash::parse_explicit(&value).unwrap_or_else(|message| panic!("{message}"));
+    }
+
     // Get the short hash of the latest Git commit. Use "unknown" if it fails
     let commit_id = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
