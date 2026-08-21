@@ -66,7 +66,10 @@ trouble-host = { version = "0.5.1", default-features = false, features = [
     "default-packet-pool-size-4",
     "connection-event-queue-size-2",
     "l2cap-rx-queue-size-1",
-    "l2cap-tx-queue-size-1",
+    # LE Secure Connections Peripheral handling queues the local Public Key
+    # and Pairing Confirm in one synchronous SMP handler. Keep two TX slots so
+    # the second command cannot fail before the consumer gets polled.
+    "l2cap-tx-queue-size-2",
 ], optional = true }
 rand_core = { version = "0.6", optional = true }
 bt-hci = { version = "0.6", optional = true }
