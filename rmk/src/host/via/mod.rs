@@ -17,7 +17,7 @@ use crate::host::storage::{KeymapData, KeymapKey};
 use crate::host::via::keycode_convert::{from_via_keycode, to_via_keycode};
 use crate::keymap::KeyMap;
 use crate::state::ConnectionState;
-use crate::{CONNECTION_STATE, MACRO_SPACE_SIZE, boot};
+use crate::{CONNECTION_STATE, MACRO_COUNT, MACRO_SPACE_SIZE, boot};
 #[cfg(feature = "storage")]
 use crate::{channel::FLASH_CHANNEL, storage::FlashOperationMessage};
 
@@ -230,8 +230,7 @@ impl<
                 boot::jump_to_bootloader();
             }
             ViaCommand::DynamicKeymapMacroGetCount => {
-                report.input_data[1] = 32;
-                warn!("Macro get count -- to be implemented")
+                report.input_data[1] = MACRO_COUNT;
             }
             ViaCommand::DynamicKeymapMacroGetBufferSize => {
                 report.input_data[1] = (MACRO_SPACE_SIZE as u16 >> 8) as u8;

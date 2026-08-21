@@ -97,6 +97,13 @@ impl KeyboardTomlConfig {
     /// - Update peripheral number based on the number of split boards
     /// - TODO: Update controller number based on the number of split boards
     pub fn auto_calculate_parameters(&mut self) {
+        if self.rmk.macro_count as usize > self.rmk.macro_space_size {
+            panic!(
+                "rmk.macro_count ({}) cannot exceed rmk.macro_space_size ({}): every Vial macro requires at least one NUL terminator",
+                self.rmk.macro_count, self.rmk.macro_space_size
+            );
+        }
+
         // Update the number of peripherals
         if let Some(split) = &self.split
             && split.peripheral.len() > self.rmk.split_peripherals_num
@@ -139,6 +146,42 @@ impl KeyboardTomlConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::KeyboardTomlConfig;
+
+    #[test]
+    fn vial_macro_count_accepts_one_macro_with_bounded_space() {
+        let mut config: KeyboardTomlConfig = toml::from_str(
+            r#"
+            [rmk]
+            macro_count = 1
+            macro_space_size = 64
+            "#,
+        )
+        .unwrap();
+
+        config.auto_calculate_parameters();
+        assert_eq!(config.rmk.macro_count, 1);
+        assert_eq!(config.rmk.macro_space_size, 64);
+    }
+
+    #[test]
+    #[should_panic(expected = "macro_count (1) cannot exceed rmk.macro_space_size (0)")]
+    fn vial_macro_count_rejects_zero_space() {
+        let mut config: KeyboardTomlConfig = toml::from_str(
+            r#"
+            [rmk]
+            macro_count = 1
+            macro_space_size = 0
+            "#,
+        )
+        .unwrap();
+
+        config.auto_calculate_parameters();
+    }
+}
+
 /// Keyboard constants configuration for performance and hardware limits
 #[serde_inline_default]
 #[derive(Clone, Debug, Deserialize)]
@@ -172,6 +215,10 @@ pub struct RmkConstantsConfig {
     /// Macro space size in bytes for storing sequences
     #[serde_inline_default(256)]
     pub macro_space_size: usize,
+    /// Maximum number of Vial macros
+    #[serde_inline_default(32)]
+    #[serde(deserialize_with = "check_macro_count")]
+    pub macro_count: u8,
     /// Default debounce time in ms
     #[serde_inline_default(20)]
     pub debounce_time: u16,
@@ -240,6 +287,17 @@ where
     Ok(value)
 }
 
+fn check_macro_count<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value = SerdeDeserialize::deserialize(deserializer)?;
+    if value > 32 {
+        panic!("❌ Parse `keyboard.toml` error: macro_count must be between 0 and 32, got {value}");
+    }
+    Ok(value)
+}
+
 fn check_fork_max_num<'de, D>(deserializer: D) -> Result<usize, D::Error>
 where
     D: de::Deserializer<'de>,
@@ -263,6 +321,7 @@ impl Default for RmkConstantsConfig {
             morse_max_num: 8,
             max_patterns_per_key: 8,
             macro_space_size: 256,
+            macro_count: 32,
             debounce_time: 20,
             event_channel_size: 16,
             controller_channel_size: 16,
