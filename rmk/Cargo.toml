@@ -57,14 +57,14 @@ display-interface-i2c = { version = "0.5", optional = true }
 
 # Optional dependencies
 # BLE dependencies
-trouble-host = { version = "0.8", default-features = false, features = [
+trouble-host = { path = "../../trouble-ch582-small-memory-main/host", default-features = false, features = [
     "peripheral",
     "gatt",
     "derive",
     "security",
     "serde",
-    "default-packet-pool",
-    "default-packet-pool-size-32",
+    "default-packet-pool-size-4",
+    "default-packet-pool-mtu-128",
 ], optional = true }
 bt-hci = { version = "0.10", optional = true }
 
