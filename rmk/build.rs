@@ -63,6 +63,7 @@ fn get_constants_str(constants: RmkConstantsConfig) -> String {
         const_declaration!(pub(crate) MACRO_SPACE_SIZE = constants.macro_space_size),
         const_declaration!(pub(crate) MACRO_COUNT = constants.macro_count),
         const_declaration!(pub(crate) FORK_MAX_NUM = constants.fork_max_num),
+        const_declaration!(pub(crate) HELD_BUFFER_SIZE = constants.held_buffer_size),
         const_declaration!(pub(crate) DEBOUNCE_THRESHOLD = constants.debounce_time),
         const_declaration!(pub(crate) EVENT_CHANNEL_SIZE = constants.event_channel_size),
         const_declaration!(pub(crate) CONTROLLER_CHANNEL_SIZE = constants.controller_channel_size),

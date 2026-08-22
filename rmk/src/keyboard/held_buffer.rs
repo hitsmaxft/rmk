@@ -1,6 +1,7 @@
 use embassy_time::Instant;
 use rmk_types::action::{Action, KeyAction};
 
+use crate::HELD_BUFFER_SIZE;
 use crate::event::{KeyboardEvent, KeyboardEventPos};
 use crate::morse::MorsePattern;
 
@@ -8,8 +9,7 @@ use crate::morse::MorsePattern;
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HeldBuffer {
-    // TODO: Make the buffer size configurable
-    pub(crate) keys: heapless::Vec<HeldKey, 16>,
+    pub(crate) keys: heapless::Vec<HeldKey, HELD_BUFFER_SIZE>,
 }
 
 impl HeldBuffer {
@@ -26,8 +26,7 @@ impl HeldBuffer {
             error!("Held buffer overflowed, cannot save: {:?}", e);
         }
 
-        // Sort the buffer after push
-        self.keys.sort_unstable_by_key(|k| k.timeout_time);
+        self.sort_by_timeout();
     }
 
     /// Push a new held key into the buffer
@@ -67,9 +66,32 @@ impl HeldBuffer {
     /// Remove a held key from the buffer and then resort the buffer
     pub fn remove(&mut self, pos: KeyboardEventPos) -> Option<HeldKey> {
         let k = self.remove_if(|k| k.event.pos == pos);
-        // Re-sort the buffer after remove
-        self.keys.sort_unstable_by_key(|k| k.timeout_time);
+        self.sort_by_timeout();
         k
+    }
+
+    // `slice::sort_unstable_by_key` uses a general small-sort scratch frame
+    // sized for much larger slices. HeldBuffer is deliberately small and
+    // almost sorted, so insertion sort preserves the existing ordering with
+    // bounded stack usage and no auxiliary storage.
+    pub(crate) fn sort_by_timeout(&mut self) {
+        for i in 1..self.keys.len() {
+            let mut j = i;
+            while j > 0 && self.keys[j].timeout_time < self.keys[j - 1].timeout_time {
+                self.keys.swap(j, j - 1);
+                j -= 1;
+            }
+        }
+    }
+
+    pub(crate) fn sort_by_press_time(&mut self) {
+        for i in 1..self.keys.len() {
+            let mut j = i;
+            while j > 0 && self.keys[j].press_time < self.keys[j - 1].press_time {
+                self.keys.swap(j, j - 1);
+                j -= 1;
+            }
+        }
     }
 
     /// Get the next timeout key in the buffer
@@ -141,5 +163,32 @@ impl HeldKey {
             press_time,
             timeout_time,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn held_key(row: u8, timeout_ticks: u64) -> HeldKey {
+        HeldKey::new(
+            KeyboardEvent::key(row, 0, true),
+            KeyAction::No,
+            KeyState::WaitingCombo,
+            Instant::from_ticks(0),
+            Instant::from_ticks(timeout_ticks),
+        )
+    }
+
+    #[test]
+    fn push_orders_keys_by_timeout_without_scratch_sort() {
+        let mut buffer = HeldBuffer::new();
+        buffer.push(held_key(0, 30));
+        buffer.push(held_key(1, 10));
+        buffer.push(held_key(2, 20));
+
+        let timeouts: heapless::Vec<u64, HELD_BUFFER_SIZE> =
+            buffer.keys.iter().map(|key| key.timeout_time.as_ticks()).collect();
+        assert_eq!(timeouts.as_slice(), &[10, 20, 30]);
     }
 }

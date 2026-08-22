@@ -180,6 +180,31 @@ mod tests {
 
         config.auto_calculate_parameters();
     }
+
+    #[test]
+    fn held_buffer_size_accepts_product_capacity() {
+        let config: KeyboardTomlConfig = toml::from_str(
+            r#"
+            [rmk]
+            held_buffer_size = 2
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.rmk.held_buffer_size, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "held_buffer_size must be between 1 and 64")]
+    fn held_buffer_size_rejects_zero() {
+        let _: KeyboardTomlConfig = toml::from_str(
+            r#"
+            [rmk]
+            held_buffer_size = 0
+            "#,
+        )
+        .unwrap();
+    }
 }
 
 /// Keyboard constants configuration for performance and hardware limits
@@ -212,6 +237,10 @@ pub struct RmkConstantsConfig {
     #[serde_inline_default(8)]
     #[serde(deserialize_with = "check_max_patterns_per_key")]
     pub max_patterns_per_key: usize,
+    /// Maximum number of simultaneously held keys tracked by the keyboard
+    #[serde_inline_default(16)]
+    #[serde(deserialize_with = "check_held_buffer_size")]
+    pub held_buffer_size: usize,
     /// Macro space size in bytes for storing sequences
     #[serde_inline_default(256)]
     pub macro_space_size: usize,
@@ -287,6 +316,17 @@ where
     Ok(value)
 }
 
+fn check_held_buffer_size<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value = SerdeDeserialize::deserialize(deserializer)?;
+    if !(1..=64).contains(&value) {
+        panic!("❌ Parse `keyboard.toml` error: held_buffer_size must be between 1 and 64, got {value}");
+    }
+    Ok(value)
+}
+
 fn check_macro_count<'de, D>(deserializer: D) -> Result<u8, D::Error>
 where
     D: de::Deserializer<'de>,
@@ -320,6 +360,7 @@ impl Default for RmkConstantsConfig {
             fork_max_num: 8,
             morse_max_num: 8,
             max_patterns_per_key: 8,
+            held_buffer_size: 16,
             macro_space_size: 256,
             macro_count: 32,
             debounce_time: 20,
