@@ -57,7 +57,7 @@ display-interface-i2c = { version = "0.5", optional = true }
 
 # Optional dependencies
 # BLE dependencies
-trouble-host = { path = "../../trouble-ch582-small-memory-main/host", default-features = false, features = [
+trouble-host = { git = "https://github.com/hitsmaxft/trouble.git", rev = "22f4d5824eec2077bbcfe654223c9a56191179d9", default-features = false, features = [
     "peripheral",
     "gatt",
     "derive",
