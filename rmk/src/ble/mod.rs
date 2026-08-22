@@ -2,7 +2,9 @@ use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetPhy};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::Error as HciError;
 use embassy_futures::join::join3;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either, select};
+#[cfg(not(feature = "compact-ble-essential-services"))]
+use embassy_futures::select::{Either3, select3};
 #[cfg(feature = "split")]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 #[cfg(feature = "split")]
@@ -15,18 +17,25 @@ use rmk_types::led_indicator::LedIndicator;
 use trouble_host::prelude::*;
 
 use crate::ble::adv::{Adv, advertise};
+#[cfg(not(feature = "compact-ble-essential-services"))]
 use crate::ble::battery_service::BleBatteryServer;
 use crate::ble::ble_server::{BleHidServer, Server};
+#[cfg(not(feature = "compact-ble-essential-services"))]
 use crate::ble::device_info::{PnPID, VidSource};
 #[cfg(feature = "host")]
 use crate::ble::host::{HOST_WRITE_BUFFER_SIZE, HostGattHandler, HostWriteOutcome};
 use crate::ble::led::BleLedReader;
 #[cfg(feature = "passkey_entry")]
 use crate::ble::passkey::{PasskeyInputState, next_gatt_event};
-use crate::ble::profile::{BOND_SLOTS, ProfileInfo, ProfileManager, UPDATED_CCCD_TABLE, UPDATED_PROFILE};
+use crate::ble::profile::{
+    BOND_SLOTS, ProfileInfo, ProfileManager, ProfileUpdateOutcome, UPDATED_CCCD_TABLE, UPDATED_PROFILE,
+    wait_profile_update,
+};
 use crate::ble::sleep::{report_activity, request_sleep};
 use crate::channel::{BLE_REPORT_CHANNEL, LED_SIGNAL};
-use crate::config::{BleBatteryConfig, DeviceConfig, RmkConfig};
+#[cfg(not(feature = "compact-ble-essential-services"))]
+use crate::config::BleBatteryConfig;
+use crate::config::{DeviceConfig, RmkConfig};
 use crate::core_traits::Runnable;
 use crate::event::SubscribableEvent;
 use crate::hid::{HidWriterTrait, run_led_reader};
@@ -37,6 +46,7 @@ use crate::split::ble::central::{run_peripheral_session, scan_and_connect_periph
 use crate::state::set_ble_state;
 
 pub(crate) mod adv;
+#[cfg(not(feature = "compact-ble-essential-services"))]
 pub(crate) mod battery_service;
 pub(crate) mod ble_server;
 pub(crate) mod device_info;
@@ -55,8 +65,12 @@ pub(crate) mod sleep;
 /// own — see [`crate::dongle::Dongle`].
 const CONNECTIONS_MAX: usize = crate::SPLIT_PERIPHERALS_NUM + 1;
 
-/// Max number of L2CAP channels
+/// Max number of dynamic credit-based L2CAP channels. ATT, SMP, and LE
+/// signaling use fixed CIDs and do not allocate from this array.
+#[cfg(not(feature = "compact-ble-fixed-channels-only"))]
 const L2CAP_CHANNELS_MAX: usize = CONNECTIONS_MAX * 4; // Signal + att + smp + hid
+#[cfg(feature = "compact-ble-fixed-channels-only")]
+const L2CAP_CHANNELS_MAX: usize = 0;
 
 /// BLE transport. Owns the whole BLE stack.
 ///
@@ -73,6 +87,7 @@ where
     controller: Option<C>,
     address: [u8; 6],
     device_config: DeviceConfig<'static>,
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     config: BleBatteryConfig<'static>,
     /// One matrix region per split peripheral.
     #[cfg(feature = "split")]
@@ -98,6 +113,7 @@ where
             controller: Some(controller),
             address,
             device_config: rmk_config.device_config,
+            #[cfg(not(feature = "compact-ble-essential-services"))]
             config: rmk_config.ble_battery_config,
             #[cfg(feature = "split")]
             peripheral_matrices,
@@ -130,13 +146,15 @@ where
 
         let controller = self.controller.take().expect("BleTransport::run called twice");
         // Exactly one link — the host.
-        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, BOND_SLOTS> =
+            HostResources::new();
         let stack = trouble_host::new(controller, &mut resources)
             .set_random_address(Address::random(self.address))
             .build();
         run_ble_keyboard(
             &stack,
             &self.device_config,
+            #[cfg(not(feature = "compact-ble-essential-services"))]
             &self.config,
             #[cfg(feature = "host")]
             self.host_service,
@@ -160,7 +178,8 @@ where
 
         let controller = self.controller.take().expect("BleTransport::run called twice");
 
-        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, BOND_SLOTS> =
+            HostResources::new();
         let stack = trouble_host::new(controller, &mut resources)
             .set_random_address(Address::random(self.address))
             .build();
@@ -179,6 +198,7 @@ where
             run_ble_keyboard(
                 &stack,
                 &self.device_config,
+                #[cfg(not(feature = "compact-ble-essential-services"))]
                 &self.config,
                 #[cfg(feature = "host")]
                 self.host_service,
@@ -196,16 +216,16 @@ where
 async fn run_ble_keyboard<#[cfg(feature = "host")] 'r, C>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     device_config: &DeviceConfig<'static>,
-    config: &BleBatteryConfig<'static>,
+    #[cfg(not(feature = "compact-ble-essential-services"))] config: &BleBatteryConfig<'static>,
     #[cfg(feature = "host")] host_service: Option<&'r crate::host::HostService<'r>>,
 ) -> !
 where
     C: Controller + ControllerCmdAsync<LeSetPhy> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     let product_name = device_config.product_name;
-    #[cfg(feature = "_nrf_ble")]
+    #[cfg(all(feature = "_nrf_ble", not(feature = "compact-ble-essential-services")))]
     let serial_number = crate::ble::nrf::get_serial_number();
-    #[cfg(not(feature = "_nrf_ble"))]
+    #[cfg(all(not(feature = "_nrf_ble"), not(feature = "compact-ble-essential-services")))]
     let serial_number = device_config.serial_number;
 
     info!("Starting advertising and GATT service");
@@ -215,6 +235,7 @@ where
     }))
     .unwrap();
 
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     server
         .set(
             &server.device_config_service.pnp_id,
@@ -228,15 +249,19 @@ where
         .unwrap();
     // The serial number characteristic is length limited, so truncate at a char
     // boundary instead of panicking when the configured serial is too long.
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     let mut serial_number_trimmed = heapless::String::new();
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     for c in serial_number.chars() {
         if serial_number_trimmed.push(c).is_err() {
             break;
         }
     }
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     server
         .set(&server.device_config_service.serial_number, &serial_number_trimmed)
         .unwrap();
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     server
         .set(
             &server.device_config_service.manufacturer_name,
@@ -279,9 +304,13 @@ where
             info!("[adv] advertising");
             set_ble_state(BleState::Advertising);
 
+            #[cfg(not(feature = "compact-ble-profile-dispatch"))]
+            let profile_update = profile_manager.update_profile();
+            #[cfg(feature = "compact-ble-profile-dispatch")]
+            let profile_update = wait_profile_update();
             match select(
                 advertise(&mut peripheral, &server.server, adv, Duration::from_secs(300)),
-                profile_manager.update_profile(),
+                profile_update,
             )
             .await
             {
@@ -301,22 +330,43 @@ where
                         disconnect(&conn).await;
                         continue;
                     }
-                    if let Either::Second(_) = select(
-                        serve_keyboard_connection(
-                            server,
-                            &conn,
-                            stack,
-                            active_bond_info,
-                            config,
-                            #[cfg(feature = "host")]
-                            host_service,
-                        ),
-                        profile_manager.update_profile(),
-                    )
-                    .await
-                    {
-                        // When the profile changes, manually disconnect from the current host
-                        disconnect(&conn).await;
+                    loop {
+                        #[cfg(not(feature = "compact-ble-profile-dispatch"))]
+                        let profile_update = profile_manager.update_profile();
+                        #[cfg(feature = "compact-ble-profile-dispatch")]
+                        let profile_update = wait_profile_update();
+                        match select(
+                            serve_keyboard_connection(
+                                server,
+                                &conn,
+                                stack,
+                                active_bond_info.clone(),
+                                #[cfg(not(feature = "compact-ble-essential-services"))]
+                                config,
+                                #[cfg(feature = "host")]
+                                host_service,
+                            ),
+                            profile_update,
+                        )
+                        .await
+                        {
+                            Either::First(_) => break,
+                            Either::Second(update) => {
+                                #[cfg(not(feature = "compact-ble-profile-dispatch"))]
+                                {
+                                    let _ = update;
+                                    disconnect(&conn).await;
+                                    break;
+                                }
+                                #[cfg(feature = "compact-ble-profile-dispatch")]
+                                if profile_manager.apply_profile_update(update).await
+                                    == ProfileUpdateOutcome::RestartLink
+                                {
+                                    disconnect(&conn).await;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 Either::First(Err(BleHostError::BleHost(Error::Timeout))) => {
@@ -342,7 +392,12 @@ where
                     error!("Advertise error: {:?}", e);
                     Timer::after_millis(200).await;
                 }
-                Either::Second(()) => {}
+                Either::Second(update) => {
+                    #[cfg(not(feature = "compact-ble-profile-dispatch"))]
+                    let _ = update;
+                    #[cfg(feature = "compact-ble-profile-dispatch")]
+                    let _ = profile_manager.apply_profile_update(update).await;
+                }
             };
 
             // Skip the Inactive transition if we never moved off Advertising
@@ -407,12 +462,15 @@ pub(crate) async fn ble_task<C: Controller + ControllerCmdAsync<LeSetPhy>, P: Pa
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
 async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Result<(), Error> {
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     let level = server.battery_service.level;
     let output_keyboard = server.hid_service.output_keyboard;
     let hid_control_point = server.hid_service.hid_control_point;
     let input_keyboard = server.hid_service.input_keyboard;
     let mouse = server.hid_service.mouse_report;
+    #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
     let media = server.hid_service.media_report;
+    #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
     let system_control = server.hid_service.system_report;
 
     #[cfg(feature = "passkey_entry")]
@@ -468,12 +526,15 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                 let mut cccd_updated = false;
                 let result = match &gatt_event {
                     GattEvent::Read(event) => {
+                        #[cfg(not(feature = "compact-ble-essential-services"))]
                         if event.handle() == level.handle {
                             let value = server.get(&level);
                             debug!("Read GATT Event to Level: {:?}", value);
                         } else {
                             debug!("Read GATT Event to Unknown: {:?}", event.handle());
                         }
+                        #[cfg(feature = "compact-ble-essential-services")]
+                        debug!("Read GATT Event: {:?}", event.handle());
 
                         if conn.raw().security_level()?.encrypted() {
                             None
@@ -498,6 +559,16 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         });
                         let data = &data_buf[..data_len.min(data_buf.len())];
                         let mut control_point_write = false;
+                        let is_report_cccd = event.handle()
+                            == input_keyboard.cccd_handle.expect("No CCCD for input keyboard")
+                            || event.handle() == mouse.cccd_handle.expect("No CCCD for mouse report");
+                        #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
+                        let is_report_cccd = is_report_cccd
+                            || event.handle() == media.cccd_handle.expect("No CCCD for media report")
+                            || event.handle() == system_control.cccd_handle.expect("No CCCD for system report");
+                        #[cfg(not(feature = "compact-ble-essential-services"))]
+                        let is_report_cccd =
+                            is_report_cccd || event.handle() == level.cccd_handle.expect("No CCCD for battery level");
 
                         if event.handle() == output_keyboard.handle {
                             if data_len == 1 {
@@ -507,12 +578,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                             } else {
                                 warn!("Wrong keyboard state data: {:?}", data);
                             }
-                        } else if event.handle() == input_keyboard.cccd_handle.expect("No CCCD for input keyboard")
-                            || event.handle() == mouse.cccd_handle.expect("No CCCD for mouse report")
-                            || event.handle() == media.cccd_handle.expect("No CCCD for media report")
-                            || event.handle() == system_control.cccd_handle.expect("No CCCD for system report")
-                            || event.handle() == level.cccd_handle.expect("No CCCD for battery level")
-                        {
+                        } else if is_report_cccd {
                             cccd_updated = true;
                         } else if event.handle() == hid_control_point.handle {
                             control_point_write = true;
@@ -732,11 +798,12 @@ async fn serve_keyboard_connection<
     conn: &GattConnection<'a, 'b, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
     active_bond_info: Option<crate::ble::profile::ProfileInfo>,
-    config: &BleBatteryConfig<'a>,
+    #[cfg(not(feature = "compact-ble-essential-services"))] config: &BleBatteryConfig<'a>,
     #[cfg(feature = "host")] host_service: Option<&'r crate::host::HostService<'r>>,
 ) {
     let mut ble_hid_server = BleHidServer::new(server, conn);
     let mut ble_led_reader = BleLedReader;
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     let mut ble_battery_server = config.enabled.then(|| BleBatteryServer::new(server, conn));
 
     // CCCD lookup uses cached bond info to avoid a cancellable flash read while
@@ -758,6 +825,10 @@ async fn serve_keyboard_connection<
     };
     update_ble_phy(stack, conn.raw(), host_phy).await;
 
+    #[cfg(all(
+        not(feature = "compact-ble-essential-services"),
+        not(feature = "compact-ble-central-owned-conn-params")
+    ))]
     let communication_task = async {
         if let Either3::First(e) = select3(
             gatt_events_task(server, conn),
@@ -766,6 +837,21 @@ async fn serve_keyboard_connection<
         )
         .await
         {
+            error!("[gatt_events_task] end: {:?}", e)
+        }
+    };
+    #[cfg(all(
+        feature = "compact-ble-essential-services",
+        not(feature = "compact-ble-central-owned-conn-params")
+    ))]
+    let communication_task = async {
+        if let Either::First(e) = select(gatt_events_task(server, conn), set_conn_params(stack, conn)).await {
+            error!("[gatt_events_task] end: {:?}", e)
+        }
+    };
+    #[cfg(feature = "compact-ble-central-owned-conn-params")]
+    let communication_task = async {
+        if let Err(e) = gatt_events_task(server, conn).await {
             error!("[gatt_events_task] end: {:?}", e)
         }
     };

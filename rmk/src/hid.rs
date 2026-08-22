@@ -309,6 +309,65 @@ pub struct BleCompositeReport {
     pub(crate) system_usage_id: u8,
 }
 
+/// BLE report map for products that expose only keyboard and mouse input.
+#[cfg(all(feature = "_ble", feature = "compact-ble-keyboard-mouse-hids"))]
+#[gen_hid_descriptor(
+    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = KEYBOARD) = {
+        (report_id = 0x01,) = {
+            (usage_page = KEYBOARD, usage_min = 0xE0, usage_max = 0xE7) = {
+                #[packed_bits = 8] #[item_settings(data,variable,absolute)] modifier=input;
+            };
+            (logical_min = 0,) = {
+                #[item_settings(constant,variable,absolute)] reserved=input;
+            };
+            (usage_page = LEDS, usage_min = 0x01, usage_max = 0x05) = {
+                #[packed_bits = 5] #[item_settings(data,variable,absolute)] leds=output;
+            };
+            (usage_page = KEYBOARD, usage_min = 0x00, usage_max = 0xDD) = {
+                #[item_settings(data,array,absolute)] keycodes=input;
+            };
+        };
+    },
+    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = MOUSE) = {
+        (collection = PHYSICAL, usage = POINTER) = {
+            (report_id = 0x02,) = {
+                (usage_page = BUTTON, usage_min = BUTTON_1, usage_max = BUTTON_8) = {
+                    #[packed_bits = 8] #[item_settings(data,variable,absolute)] buttons=input;
+                };
+                (usage_page = GENERIC_DESKTOP,) = {
+                    (usage = X,) = {
+                        #[item_settings(data,variable,relative)] x=input;
+                    };
+                    (usage = Y,) = {
+                        #[item_settings(data,variable,relative)] y=input;
+                    };
+                    (usage = WHEEL,) = {
+                        #[item_settings(data,variable,relative)] wheel=input;
+                    };
+                };
+                (usage_page = CONSUMER,) = {
+                    (usage = AC_PAN,) = {
+                        #[item_settings(data,variable,relative)] pan=input;
+                    };
+                };
+            };
+        };
+    }
+)]
+#[allow(dead_code)]
+#[derive(Default)]
+pub struct BleKeyboardMouseReport {
+    pub(crate) modifier: u8,
+    pub(crate) reserved: u8,
+    pub(crate) leds: u8,
+    pub(crate) keycodes: [u8; 6],
+    pub(crate) buttons: u8,
+    pub(crate) x: i8,
+    pub(crate) y: i8,
+    pub(crate) wheel: i8,
+    pub(crate) pan: i8,
+}
+
 #[cfg(all(test, feature = "_ble"))]
 mod ble_report_map_tests {
     use usbd_hid::descriptor::SerializedDescriptor;
@@ -331,6 +390,18 @@ mod ble_report_map_tests {
                 assert!(keyboard < id, "keyboard collection must own ReportID 1");
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "_ble", feature = "compact-ble-keyboard-mouse-hids"))]
+mod compact_ble_report_map_tests {
+    use usbd_hid::descriptor::SerializedDescriptor;
+
+    use super::BleKeyboardMouseReport;
+
+    #[test]
+    fn compact_keyboard_mouse_report_map_has_locked_size() {
+        assert_eq!(BleKeyboardMouseReport::desc().len(), 129);
     }
 }
 

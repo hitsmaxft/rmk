@@ -92,6 +92,32 @@ pub(crate) enum BleProfileAction {
     ClearSlot(u8),
 }
 
+pub(crate) enum ProfileUpdate {
+    Action(BleProfileAction),
+    Bond(ProfileInfo),
+    Cccd(heapless::Vec<u8, CCCD_TABLE_SIZE>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProfileUpdateOutcome {
+    Continue,
+    RestartLink,
+}
+
+pub(crate) async fn wait_profile_update() -> ProfileUpdate {
+    match select3(
+        BLE_PROFILE_CHANNEL.receive(),
+        UPDATED_PROFILE.wait(),
+        UPDATED_CCCD_TABLE.wait(),
+    )
+    .await
+    {
+        Either3::First(action) => ProfileUpdate::Action(action),
+        Either3::Second(profile_info) => ProfileUpdate::Bond(profile_info),
+        Either3::Third(table) => ProfileUpdate::Cccd(table),
+    }
+}
+
 /// Manage BLE profiles and bonding information
 ///
 /// ProfileManager is responsible for:
@@ -300,61 +326,59 @@ where
     /// based on the operation type. After completing the operation, it will wait for a period
     /// to ensure the flash operation is completed.
     pub(crate) async fn update_profile(&mut self) {
-        // Wait for profile switch or updated profile event
         loop {
-            match select3(
-                BLE_PROFILE_CHANNEL.receive(),
-                UPDATED_PROFILE.wait(),
-                UPDATED_CCCD_TABLE.wait(),
-            )
-            .await
-            {
-                Either3::First(action) => {
-                    #[cfg(feature = "storage")]
-                    FLASH_OPERATION_FINISHED.reset();
-                    match action {
-                        BleProfileAction::Switch(profile) => {
-                            if !self.switch_profile(profile).await {
-                                // If the profile is the same as the current profile, do nothing
-                                continue;
-                            }
-                        }
-                        BleProfileAction::Previous => {
-                            let mut profile = current_profile();
-                            profile = if profile == 0 {
-                                NUM_BLE_PROFILE as u8 - 1
-                            } else {
-                                profile - 1
-                            };
+            if self.apply_profile_update(wait_profile_update().await).await == ProfileUpdateOutcome::RestartLink {
+                break;
+            }
+        }
+    }
 
-                            self.switch_profile(profile).await;
-                        }
-                        BleProfileAction::Next => {
-                            // Cycling stays within the host profiles. The dongle slot sits past
-                            // the last one, so wrap there too instead of landing on profile 1.
-                            let next = current_profile() + 1;
-                            let profile = if next >= NUM_BLE_PROFILE as u8 { 0 } else { next };
-
-                            self.switch_profile(profile).await;
-                        }
-                        BleProfileAction::ClearBond => {
-                            self.clear_bond(current_profile()).await;
-                        }
-                        BleProfileAction::ClearSlot(slot) => {
-                            self.clear_bond(slot).await;
-                        }
+    pub(crate) async fn apply_profile_update(&mut self, update: ProfileUpdate) -> ProfileUpdateOutcome {
+        match update {
+            ProfileUpdate::Action(action) => {
+                #[cfg(feature = "storage")]
+                FLASH_OPERATION_FINISHED.reset();
+                let restart = match action {
+                    BleProfileAction::Switch(profile) => self.switch_profile(profile).await,
+                    BleProfileAction::Previous => {
+                        let profile = if current_profile() == 0 {
+                            NUM_BLE_PROFILE as u8 - 1
+                        } else {
+                            current_profile() - 1
+                        };
+                        self.switch_profile(profile).await;
+                        true
                     }
-                    #[cfg(feature = "storage")]
-                    FLASH_OPERATION_FINISHED.wait().await;
-                    info!("Update profile done");
-                    break;
+                    BleProfileAction::Next => {
+                        let next = current_profile() + 1;
+                        let profile = if next >= NUM_BLE_PROFILE as u8 { 0 } else { next };
+                        self.switch_profile(profile).await;
+                        true
+                    }
+                    BleProfileAction::ClearBond => {
+                        self.clear_bond(current_profile()).await;
+                        true
+                    }
+                    BleProfileAction::ClearSlot(slot) => {
+                        self.clear_bond(slot).await;
+                        true
+                    }
+                };
+                if !restart {
+                    return ProfileUpdateOutcome::Continue;
                 }
-                Either3::Second(profile_info) => {
-                    self.add_profile_info(profile_info).await;
-                }
-                Either3::Third(table) => {
-                    self.update_profile_cccd_table(table).await;
-                }
+                #[cfg(feature = "storage")]
+                FLASH_OPERATION_FINISHED.wait().await;
+                info!("Update profile done");
+                ProfileUpdateOutcome::RestartLink
+            }
+            ProfileUpdate::Bond(profile_info) => {
+                self.add_profile_info(profile_info).await;
+                ProfileUpdateOutcome::Continue
+            }
+            ProfileUpdate::Cccd(table) => {
+                self.update_profile_cccd_table(table).await;
+                ProfileUpdateOutcome::Continue
             }
         }
     }

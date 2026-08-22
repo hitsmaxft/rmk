@@ -65,9 +65,7 @@ trouble-host = { path = "../../trouble-ch582-small-memory-main/host", default-fe
     "serde",
     "default-packet-pool-size-4",
     "default-packet-pool-mtu-128",
-    "connection-event-queue-size-2",
     "l2cap-rx-queue-size-1",
-    "l2cap-tx-queue-size-2",
 ], optional = true }
 bt-hci = { version = "0.9", optional = true }
 
@@ -128,6 +126,43 @@ host = ["dep:byteorder"]
 
 ## Enable vial support
 vial = ["host"]
+
+## Compact AttributeTable metadata for products whose GATT database uses only
+## Bluetooth 16-bit UUIDs. The Trouble constructor rejects wider UUIDs.
+compact-gatt-uuid16 = ["trouble-host?/gatt-uuid16-only"]
+compact-gatt-storage = ["trouble-host?/gatt-small-data-8"]
+compact-security-rng = ["trouble-host?/security-compact-rng"]
+## The keyboard uses only fixed ATT, SMP, and LE signaling CIDs. Trouble's
+## ChannelStorage array is for dynamic credit-based L2CAP channels, so this
+## product profile does not reserve any dynamic channel slots.
+compact-ble-fixed-channels-only = []
+## Keep only the product's required HIDS and host-protocol GATT services.
+## Battery and Device Information remain the default; compact products must
+## opt in explicitly and validate their GATT inventory as a different SKU.
+compact-ble-essential-services = []
+compact-ble-hci-rx-64 = ["trouble-host?/hci-rx-buffer-64"]
+compact-ble-static-address = ["trouble-host?/security-no-address-privacy"]
+compact-ble-queues = [
+    "trouble-host?/connection-event-queue-size-1",
+    "trouble-host?/l2cap-tx-queue-size-1",
+]
+## Accept the connection interval selected by the central instead of retaining
+## a permanent peripheral-side connection-parameter request future.
+compact-ble-central-owned-conn-params = []
+## Wait for profile/bond/CCCD signals with a small future, then apply the
+## selected update sequentially. This avoids retaining flash write state next
+## to the complete advertising or connected-session future.
+compact-ble-profile-dispatch = []
+compact-ble-keyboard-mouse-hids = []
+## Three notify CCCDs require 22 bytes (4-byte header, three 4-byte index
+## entries, and three 2-byte values); keep a 32-byte persisted client table.
+compact-ble-client-att-32 = ["trouble-host?/client-att-table-size-32"]
+## Exact compact Keyboard/Mouse/Vial profile uses 22 bytes; retain two bytes
+## of product-specific development margin.
+compact-ble-client-att-24 = ["trouble-host?/client-att-table-size-24"]
+## Remove combo-processing futures for products that declare zero combo slots.
+## Vial macro support is independent and remains available.
+compact-no-combos = []
 
 ## Enable DFU lock feature — physical key unlock for DFU firmware download
 dfu_lock = ["host_lock"]

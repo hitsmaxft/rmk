@@ -35,6 +35,9 @@ use crate::keyboard_macros::MacroOperation;
 use crate::keymap::KeyMap;
 use crate::{COMBO_MAX_NUM, FORK_MAX_NUM, MACRO_SPACE_SIZE, boot};
 
+#[cfg(feature = "compact-no-combos")]
+const _: () = assert!(COMBO_MAX_NUM == 0, "compact-no-combos requires combo_max_num = 0");
+
 pub(crate) mod auto_mouse_layer;
 pub mod combo;
 pub(crate) mod fork;
@@ -321,22 +324,27 @@ impl<'a> Keyboard<'a> {
         );
         match key.state {
             KeyState::WaitingCombo => {
-                debug!(
-                    "[Combo] Waiting combo, timeout in: {:?}ms",
-                    (key.timeout_time.saturating_duration_since(Instant::now())).as_millis()
-                );
-                match with_deadline(key.timeout_time, self.keyboard_event_subscriber.next_message_pure()).await {
-                    Ok(event) => {
-                        // Process new key event
-                        debug!("[Combo] Interrupted by a new key event: {:?}", event);
-                        self.process_inner(event).await;
-                    }
-                    Err(_timeout) => {
-                        // Timeout, dispatch combo
-                        debug!("[Combo] Timeout, dispatch combo");
-                        self.dispatch_combos(&key.action, key.event).await;
+                #[cfg(not(feature = "compact-no-combos"))]
+                {
+                    debug!(
+                        "[Combo] Waiting combo, timeout in: {:?}ms",
+                        (key.timeout_time.saturating_duration_since(Instant::now())).as_millis()
+                    );
+                    match with_deadline(key.timeout_time, self.keyboard_event_subscriber.next_message_pure()).await {
+                        Ok(event) => {
+                            // Process new key event
+                            debug!("[Combo] Interrupted by a new key event: {:?}", event);
+                            self.process_inner(event).await;
+                        }
+                        Err(_timeout) => {
+                            // Timeout, dispatch combo
+                            debug!("[Combo] Timeout, dispatch combo");
+                            self.dispatch_combos(&key.action, key.event).await;
+                        }
                     }
                 }
+                #[cfg(feature = "compact-no-combos")]
+                unreachable!("a zero-combo build cannot enqueue WaitingCombo");
             }
             KeyState::Pressed(_) | KeyState::Released(_) | KeyState::EarlyFired(_) if key.action.is_morse() => {
                 // Wait for timeout or new key event
@@ -375,6 +383,7 @@ impl<'a> Keyboard<'a> {
         // Process key
         let key_action = &self.keymap.get_action_with_layer_cache(event);
 
+        #[cfg(not(feature = "compact-no-combos"))]
         if self.combo_on {
             if let (Some(key_action), is_combo) = self.process_combo(key_action, event, event_time).await {
                 self.process_key_action(&key_action, event, is_combo, event_time).await
@@ -382,6 +391,8 @@ impl<'a> Keyboard<'a> {
         } else {
             self.process_key_action(key_action, event, false, event_time).await
         }
+        #[cfg(feature = "compact-no-combos")]
+        self.process_key_action(key_action, event, false, event_time).await;
     }
 
     async fn process_key_action(

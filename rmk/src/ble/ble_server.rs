@@ -1,13 +1,19 @@
 use trouble_host::prelude::*;
 use usbd_hid::descriptor::{AsInputReport, SerializedDescriptor};
 
+#[cfg(not(feature = "compact-ble-essential-services"))]
 use super::battery_service::BatteryService;
+#[cfg(not(feature = "compact-ble-essential-services"))]
 use super::device_info::DeviceConfigurationService;
+#[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
+use crate::hid::BleCompositeReport;
+#[cfg(feature = "compact-ble-keyboard-mouse-hids")]
+use crate::hid::BleKeyboardMouseReport;
 #[cfg(feature = "rynk")]
 use crate::hid::RynkHidReport;
 #[cfg(feature = "vial")]
 use crate::hid::ViaReport;
-use crate::hid::{BleCompositeReport, CompositeReportType, HidError, HidWriterTrait, Report};
+use crate::hid::{CompositeReportType, HidError, HidWriterTrait, Report};
 
 // Used for saving the client attribute (CCCD) table. Tracks the trouble-host
 // per-connection client-specific attribute buffer size.
@@ -21,27 +27,33 @@ use rmk_types::protocol::rynk::{
 #[cfg(feature = "vial")]
 #[gatt_server]
 pub(crate) struct Server {
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) battery_service: BatteryService,
     pub(crate) hid_service: HidService,
     pub(crate) vial_service: VialGattService,
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) device_config_service: DeviceConfigurationService,
 }
 
 #[cfg(feature = "rynk")]
 #[gatt_server]
 pub(crate) struct Server {
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) battery_service: BatteryService,
     pub(crate) hid_service: HidService,
     pub(crate) rynk_service: RynkGattService,
     pub(crate) rynk_hid_service: RynkHidService,
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) device_config_service: DeviceConfigurationService,
 }
 
 #[cfg(not(feature = "host"))]
 #[gatt_server]
 pub(crate) struct Server {
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) battery_service: BatteryService,
     pub(crate) hid_service: HidService,
+    #[cfg(not(feature = "compact-ble-essential-services"))]
     pub(crate) device_config_service: DeviceConfigurationService,
 }
 
@@ -114,6 +126,7 @@ pub(crate) struct VialGattService {
 /// each characteristic's Report Reference descriptor. Android's HID host only
 /// attaches to the first HID service instance, so the reports must not be
 /// spread over multiple service instances.
+#[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
 #[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
 pub(crate) struct HidService {
     #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
@@ -141,10 +154,38 @@ pub(crate) struct HidService {
     pub(crate) system_report: [u8; 1],
 }
 
+/// Product HIDS profile with only the keyboard and mouse reports that are
+/// present in `BleKeyboardMouseReport`.  A separate service definition keeps
+/// the generated CCCD-capacity proof aligned with the fields that actually
+/// exist; field-level `cfg` is too late for that macro-level calculation.
+#[cfg(feature = "compact-ble-keyboard-mouse-hids")]
+#[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
+pub(crate) struct HidService {
+    #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
+    pub(crate) hid_info: [u8; 4],
+    #[characteristic(uuid = "2a4b", read, value = BleKeyboardMouseReport::desc().try_into().expect("Failed to convert BleKeyboardMouseReport to [u8; 129]"))]
+    pub(crate) report_map: [u8; 129],
+    #[characteristic(uuid = "2a4c", write_without_response)]
+    pub(crate) hid_control_point: u8,
+    #[characteristic(uuid = "2a4e", read, write_without_response, value = 1)]
+    pub(crate) protocol_mode: u8,
+    #[descriptor(uuid = "2908", read, value = [CompositeReportType::Keyboard as u8, 1u8])]
+    #[characteristic(uuid = "2a4d", read, notify)]
+    pub(crate) input_keyboard: [u8; 8],
+    #[descriptor(uuid = "2908", read, value = [CompositeReportType::Keyboard as u8, 2u8])]
+    #[characteristic(uuid = "2a4d", read, write, write_without_response)]
+    pub(crate) output_keyboard: [u8; 1],
+    #[descriptor(uuid = "2908", read, value = [CompositeReportType::Mouse as u8, 1u8])]
+    #[characteristic(uuid = "2a4d", read, notify)]
+    pub(crate) mouse_report: [u8; 5],
+}
+
 pub(crate) struct BleHidServer<'stack, 'server, 'conn, P: PacketPool> {
     input_keyboard: Characteristic<[u8; 8]>,
     mouse_report: Characteristic<[u8; 5]>,
+    #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
     media_report: Characteristic<[u8; 2]>,
+    #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
     system_report: Characteristic<[u8; 1]>,
     conn: &'conn GattConnection<'stack, 'server, P>,
 }
@@ -154,7 +195,9 @@ impl<'stack, 'server, 'conn, P: PacketPool> BleHidServer<'stack, 'server, 'conn,
         Self {
             input_keyboard: server.hid_service.input_keyboard,
             mouse_report: server.hid_service.mouse_report,
+            #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
             media_report: server.hid_service.media_report,
+            #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
             system_report: server.hid_service.system_report,
             conn,
         }
@@ -182,8 +225,24 @@ impl<P: PacketPool> HidWriterTrait for BleHidServer<'_, '_, '_, P> {
         match report {
             Report::KeyboardReport(r) => self.notify_report(self.input_keyboard, r).await,
             Report::MouseReport(r) => self.notify_report(self.mouse_report, r).await,
-            Report::MediaKeyboardReport(r) => self.notify_report(self.media_report, r).await,
-            Report::SystemControlReport(r) => self.notify_report(self.system_report, r).await,
+            Report::MediaKeyboardReport(r) => {
+                #[cfg(feature = "compact-ble-keyboard-mouse-hids")]
+                {
+                    let _ = r;
+                    Ok(0)
+                }
+                #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
+                self.notify_report(self.media_report, r).await
+            }
+            Report::SystemControlReport(r) => {
+                #[cfg(feature = "compact-ble-keyboard-mouse-hids")]
+                {
+                    let _ = r;
+                    Ok(0)
+                }
+                #[cfg(not(feature = "compact-ble-keyboard-mouse-hids"))]
+                self.notify_report(self.system_report, r).await
+            }
             // Plover HID over BLE is not supported: the stock HID-over-GATT service
             // has no stenography characteristic. Drop silently at the writer.
             #[cfg(feature = "steno")]
