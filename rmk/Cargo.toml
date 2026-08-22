@@ -65,9 +65,6 @@ trouble-host = { git = "https://github.com/hitsmaxft/trouble.git", rev = "22f4d5
     "serde",
     "default-packet-pool-size-4",
     "default-packet-pool-mtu-128",
-    "connection-event-queue-size-2",
-    "l2cap-rx-queue-size-1",
-    "l2cap-tx-queue-size-2",
 ], optional = true }
 bt-hci = { version = "0.9", optional = true }
 
