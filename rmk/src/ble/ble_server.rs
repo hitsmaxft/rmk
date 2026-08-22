@@ -6,7 +6,9 @@ use static_cell::StaticCell;
 use trouble_host::prelude::*;
 use usbd_hid::descriptor::SerializedDescriptor;
 
+#[cfg(not(feature = "ble-compact-services"))]
 use super::battery_service::BatteryService;
+#[cfg(not(feature = "ble-compact-services"))]
 use super::device_info::DeviceConfigrmationService;
 #[cfg(feature = "host")]
 use super::host_service::HostService;
@@ -25,7 +27,11 @@ pub(crate) const CCCD_TABLE_SIZE: usize = _CCCD_TABLE_SIZE;
 // the flag was on, for some reason. I suspect it might have something to do with
 // the `gatt_server` macro, but I'm not sure. So we need 2 versions of the Server
 // struct, one with vial support, and one without.
-#[cfg(all(feature = "host", not(feature = "ble-keyboard-only")))]
+#[cfg(all(
+    feature = "host",
+    not(feature = "ble-keyboard-only"),
+    not(feature = "ble-compact-services")
+))]
 #[gatt_server]
 pub(crate) struct Server {
     pub(crate) battery_service: BatteryService,
@@ -35,7 +41,11 @@ pub(crate) struct Server {
     pub(crate) device_config_service: DeviceConfigrmationService,
 }
 
-#[cfg(all(feature = "host", feature = "ble-keyboard-only"))]
+#[cfg(all(
+    feature = "host",
+    feature = "ble-keyboard-only",
+    not(feature = "ble-compact-services")
+))]
 #[gatt_server]
 pub(crate) struct Server {
     pub(crate) battery_service: BatteryService,
@@ -43,6 +53,19 @@ pub(crate) struct Server {
     pub(crate) host_service: HostService,
     pub(crate) device_config_service: DeviceConfigrmationService,
 }
+
+#[cfg(all(feature = "host", feature = "ble-keyboard-only", feature = "ble-compact-services"))]
+#[gatt_server]
+pub(crate) struct Server {
+    pub(crate) hid_service: HidService,
+    pub(crate) host_service: HostService,
+}
+
+#[cfg(all(
+    feature = "ble-compact-services",
+    not(all(feature = "host", feature = "ble-keyboard-only"))
+))]
+compile_error!("ble-compact-services requires both host and ble-keyboard-only");
 
 type RmkAttributeServer = AttributeServer<
     'static,
@@ -68,14 +91,18 @@ pub(crate) fn init_server(gap: GapConfig<'static>) -> Result<&'static Server<'st
             &mut *core::ptr::addr_of_mut!((*server).server).cast::<MaybeUninit<RmkAttributeServer>>();
         let (_, handles) = AttributeServer::init_in_place_with(attribute_server, |table| {
             gap.build(table)?;
+            #[cfg(not(feature = "ble-compact-services"))]
             let battery_service = BatteryService::new(table);
             let hid_service = HidService::new(table);
             #[cfg(feature = "host")]
             let host_service = Some(HostService::new(table));
             #[cfg(not(feature = "host"))]
             let host_service: Option<()> = None;
+            #[cfg(not(feature = "ble-compact-services"))]
             let device_config_service = DeviceConfigrmationService::new(table);
-            #[cfg(feature = "ble-keyboard-only")]
+            #[cfg(feature = "ble-compact-services")]
+            return Ok::<_, &'static str>((hid_service, host_service));
+            #[cfg(all(feature = "ble-keyboard-only", not(feature = "ble-compact-services")))]
             return Ok::<_, &'static str>((battery_service, hid_service, host_service, device_config_service));
             #[cfg(not(feature = "ble-keyboard-only"))]
             {
@@ -89,24 +116,32 @@ pub(crate) fn init_server(gap: GapConfig<'static>) -> Result<&'static Server<'st
                 ))
             }
         });
-        #[cfg(feature = "ble-keyboard-only")]
+        #[cfg(all(feature = "ble-keyboard-only", not(feature = "ble-compact-services")))]
         let (battery_service, hid_service, host_service, device_config_service) = handles?;
+        #[cfg(feature = "ble-compact-services")]
+        let (hid_service, host_service) = handles?;
         #[cfg(not(feature = "ble-keyboard-only"))]
         let (battery_service, hid_service, host_service, composite_service, device_config_service) = handles?;
         #[cfg(not(feature = "host"))]
         let _ = host_service;
+        #[cfg(not(feature = "ble-compact-services"))]
         core::ptr::addr_of_mut!((*server).battery_service).write(battery_service);
         core::ptr::addr_of_mut!((*server).hid_service).write(hid_service);
         #[cfg(feature = "host")]
         core::ptr::addr_of_mut!((*server).host_service).write(host_service.unwrap());
         #[cfg(not(feature = "ble-keyboard-only"))]
         core::ptr::addr_of_mut!((*server).composite_service).write(composite_service);
+        #[cfg(not(feature = "ble-compact-services"))]
         core::ptr::addr_of_mut!((*server).device_config_service).write(device_config_service);
         Ok(&*server)
     }
 }
 
-#[cfg(all(not(feature = "host"), not(feature = "ble-keyboard-only")))]
+#[cfg(all(
+    not(feature = "host"),
+    not(feature = "ble-keyboard-only"),
+    not(feature = "ble-compact-services")
+))]
 #[gatt_server]
 pub(crate) struct Server {
     pub(crate) battery_service: BatteryService,
@@ -115,7 +150,11 @@ pub(crate) struct Server {
     pub(crate) device_config_service: DeviceConfigrmationService,
 }
 
-#[cfg(all(not(feature = "host"), feature = "ble-keyboard-only"))]
+#[cfg(all(
+    not(feature = "host"),
+    feature = "ble-keyboard-only",
+    not(feature = "ble-compact-services")
+))]
 #[gatt_server]
 pub(crate) struct Server {
     pub(crate) battery_service: BatteryService,

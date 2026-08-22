@@ -5,12 +5,14 @@ use crate::usb::UsbKeyboardOnlyWriter;
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetPhy};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::join::join;
-use embassy_futures::select::{Either3, select, select3};
+use embassy_futures::select::select;
+#[cfg(any(not(feature = "_no_usb"), not(feature = "ble-compact-services")))]
+use embassy_futures::select::{Either3, select3};
 use embassy_time::{Duration, Timer, with_timeout};
 use rand_core::{CryptoRng, RngCore};
 use rmk_types::led_indicator::LedIndicator;
 use trouble_host::prelude::appearance::human_interface_device::KEYBOARD;
-#[cfg(not(feature = "ble-priority"))]
+#[cfg(all(not(feature = "ble-priority"), not(feature = "ble-compact-services")))]
 use trouble_host::prelude::service::BATTERY;
 use trouble_host::prelude::service::HUMAN_INTERFACE_DEVICE;
 use trouble_host::prelude::*;
@@ -45,8 +47,10 @@ use {
     embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash,
 };
 
+#[cfg(not(feature = "ble-compact-services"))]
 use crate::ble::battery_service::BleBatteryServer;
 use crate::ble::ble_server::{BleHidServer, Server};
+#[cfg(not(feature = "ble-compact-services"))]
 use crate::ble::device_info::{PnPID, VidSource};
 use crate::ble::led::BleLedReader;
 use crate::ble::profile::{ProfileInfo, ProfileManager, UPDATED_CCCD_TABLE, UPDATED_PROFILE};
@@ -59,8 +63,10 @@ use crate::state::{ConnectionState, ConnectionType};
 #[cfg(feature = "usb_log")]
 use crate::usb::add_usb_logger;
 use crate::{CONNECTION_STATE, run_keyboard};
+#[cfg(not(feature = "ble-compact-services"))]
 pub(crate) mod battery_service;
 pub(crate) mod ble_server;
+#[cfg(not(feature = "ble-compact-services"))]
 pub(crate) mod device_info;
 #[cfg(feature = "host")]
 pub(crate) mod host_service;
@@ -282,31 +288,34 @@ async fn run_ble_inner<
     }))
     .unwrap();
 
-    server
-        .set(
-            &server.device_config_service.pnp_id,
-            &PnPID {
-                vid_source: VidSource::UsbIF,
-                vendor_id: rmk_config.device_config.vid,
-                product_id: rmk_config.device_config.pid,
-                product_version: 0x0001,
-            },
-        )
-        .unwrap();
+    #[cfg(not(feature = "ble-compact-services"))]
+    {
+        server
+            .set(
+                &server.device_config_service.pnp_id,
+                &PnPID {
+                    vid_source: VidSource::UsbIF,
+                    vendor_id: rmk_config.device_config.vid,
+                    product_id: rmk_config.device_config.pid,
+                    product_version: 0x0001,
+                },
+            )
+            .unwrap();
 
-    server
-        .set(
-            &server.device_config_service.serial_number,
-            &heapless::String::try_from(rmk_config.device_config.serial_number).unwrap(),
-        )
-        .unwrap();
+        server
+            .set(
+                &server.device_config_service.serial_number,
+                &heapless::String::try_from(rmk_config.device_config.serial_number).unwrap(),
+            )
+            .unwrap();
 
-    server
-        .set(
-            &server.device_config_service.manufacturer_name,
-            &heapless::String::try_from(rmk_config.device_config.manufacturer).unwrap(),
-        )
-        .unwrap();
+        server
+            .set(
+                &server.device_config_service.manufacturer_name,
+                &heapless::String::try_from(rmk_config.device_config.manufacturer).unwrap(),
+            )
+            .unwrap();
+    }
 
     #[cfg(not(feature = "_no_usb"))]
     let usb_task = async {
@@ -587,6 +596,7 @@ pub(crate) async fn ble_task<C: Controller + ControllerCmdAsync<LeSetPhy>, P: Pa
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
 async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Result<(), Error> {
+    #[cfg(not(feature = "ble-compact-services"))]
     let level = server.battery_service.level;
     let output_keyboard = server.hid_service.output_keyboard;
     let hid_control_point = server.hid_service.hid_control_point;
@@ -597,6 +607,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
     let input_host = server.host_service.input_data;
     #[cfg(feature = "host")]
     let host_control_point = server.host_service.hid_control_point;
+    #[cfg(not(feature = "ble-compact-services"))]
     let battery_level = server.battery_service.level;
     #[cfg(not(feature = "ble-keyboard-only"))]
     let mouse = server.composite_service.mouse_report;
@@ -644,12 +655,15 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                 let mut cccd_updated = false;
                 let result = match &gatt_event {
                     GattEvent::Read(event) => {
+                        #[cfg(not(feature = "ble-compact-services"))]
                         if event.handle() == level.handle {
                             let value = server.get(&level);
                             debug!("Read GATT Event to Level: {:?}", value);
                         } else {
                             debug!("Read GATT Event to Unknown: {:?}", event.handle());
                         }
+                        #[cfg(feature = "ble-compact-services")]
+                        debug!("Read GATT Event: {:?}", event.handle());
 
                         if conn.raw().security_level()?.encrypted() {
                             None
@@ -667,8 +681,10 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                                 warn!("Wrong keyboard state data: {:?}", event.data());
                             }
                         } else if {
-                            let is_cccd = event.handle()
-                                == input_keyboard.cccd_handle.expect("No CCCD for input keyboard")
+                            let is_cccd =
+                                event.handle() == input_keyboard.cccd_handle.expect("No CCCD for input keyboard");
+                            #[cfg(not(feature = "ble-compact-services"))]
+                            let is_cccd = is_cccd
                                 || event.handle() == battery_level.cccd_handle.expect("No CCCD for battery level");
                             #[cfg(not(feature = "ble-keyboard-only"))]
                             let is_cccd = is_cccd
@@ -844,8 +860,10 @@ async fn advertise<'a, 'b, C: Controller>(
     let mut advertiser_data = [0; 31];
     #[cfg(feature = "ble-priority")]
     let advertised_services = [HUMAN_INTERFACE_DEVICE.to_le_bytes()];
-    #[cfg(not(feature = "ble-priority"))]
+    #[cfg(all(not(feature = "ble-priority"), not(feature = "ble-compact-services")))]
     let advertised_services = [BATTERY.to_le_bytes(), HUMAN_INTERFACE_DEVICE.to_le_bytes()];
+    #[cfg(all(not(feature = "ble-priority"), feature = "ble-compact-services"))]
+    let advertised_services = [HUMAN_INTERFACE_DEVICE.to_le_bytes()];
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
@@ -1000,6 +1018,7 @@ async fn run_ble_keyboard<
     #[cfg(feature = "host")]
     let ble_host_server = BleHostServer::new(server, conn);
     let ble_led_reader = BleLedReader {};
+    #[cfg(not(feature = "ble-compact-services"))]
     let mut ble_battery_server = BleBatteryServer::new(server, conn);
 
     // Load CCCD table from storage
@@ -1016,6 +1035,7 @@ async fn run_ble_keyboard<
     // Use 2M Phy
     update_ble_phy(stack, conn.raw()).await;
 
+    #[cfg(not(feature = "ble-compact-services"))]
     let communication_task = async {
         if let Either3::First(e) = select3(
             gatt_events_task(server, conn),
@@ -1023,6 +1043,14 @@ async fn run_ble_keyboard<
             ble_battery_server.run(),
         )
         .await
+        {
+            error!("[gatt_events_task] end: {:?}", e)
+        }
+    };
+    #[cfg(feature = "ble-compact-services")]
+    let communication_task = async {
+        if let embassy_futures::select::Either::First(e) =
+            select(gatt_events_task(server, conn), set_conn_params(stack, conn)).await
         {
             error!("[gatt_events_task] end: {:?}", e)
         }

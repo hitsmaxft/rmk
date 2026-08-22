@@ -183,6 +183,11 @@ ble-priority = []
 ## Build only the standard keyboard HIDS service, without mouse/media/system reports.
 ble-keyboard-only = []
 
+## Build only GAP, keyboard HIDS, and the host configurator HIDS service.
+## This is intended for SRAM-constrained single-role keyboards without a
+## battery gauge or Device Information Service.
+ble-compact-services = []
+
 ## Enable to use controllers to control other hardwares on the board or peripheral
 controller = []
 
