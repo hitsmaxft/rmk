@@ -144,7 +144,10 @@ compact-ble-hci-rx-64 = ["trouble-host?/hci-rx-buffer-64"]
 compact-ble-static-address = ["trouble-host?/security-no-address-privacy"]
 compact-ble-queues = [
     "trouble-host?/connection-event-queue-size-1",
-    "trouble-host?/l2cap-tx-queue-size-1",
+    # LE Secure Connections Peripheral handling queues the local Public Key
+    # and Pairing Confirm in one synchronous Trouble state transition.  A
+    # single outbound slot cannot be drained between those two sends.
+    "trouble-host?/l2cap-tx-queue-size-2",
 ]
 ## Accept the connection interval selected by the central instead of retaining
 ## a permanent peripheral-side connection-parameter request future.
