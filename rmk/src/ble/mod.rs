@@ -330,6 +330,19 @@ where
                         disconnect(&conn).await;
                         continue;
                     }
+                    // Restore the cached client attribute state before the
+                    // long-lived connection future is constructed. Keeping an
+                    // owned ProfileInfo inside that future needlessly retains
+                    // the bond/LTK and profile metadata after this one-time
+                    // operation has completed.
+                    if let Some(bond_info) = &active_bond_info {
+                        info!("Loading CCCD table: {:?}", bond_info.cccd_table);
+                        match ClientAttTableView::try_from_raw(&bond_info.cccd_table) {
+                            Ok(view) => server.set_client_att_table(conn.raw(), &view),
+                            Err(e) => warn!("Invalid stored CCCD table: {:?}", e),
+                        }
+                    }
+                    drop(active_bond_info);
                     loop {
                         #[cfg(not(feature = "compact-ble-profile-dispatch"))]
                         let profile_update = profile_manager.update_profile();
@@ -340,7 +353,6 @@ where
                                 server,
                                 &conn,
                                 stack,
-                                active_bond_info.clone(),
                                 #[cfg(not(feature = "compact-ble-essential-services"))]
                                 config,
                                 #[cfg(feature = "host")]
@@ -797,7 +809,6 @@ async fn serve_keyboard_connection<
     server: &'b Server<'_>,
     conn: &GattConnection<'a, 'b, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
-    active_bond_info: Option<crate::ble::profile::ProfileInfo>,
     #[cfg(not(feature = "compact-ble-essential-services"))] config: &BleBatteryConfig<'a>,
     #[cfg(feature = "host")] host_service: Option<&'r crate::host::HostService<'r>>,
 ) {
@@ -805,18 +816,6 @@ async fn serve_keyboard_connection<
     let mut ble_led_reader = BleLedReader;
     #[cfg(not(feature = "compact-ble-essential-services"))]
     let mut ble_battery_server = config.enabled.then(|| BleBatteryServer::new(server, conn));
-
-    // CCCD lookup uses cached bond info to avoid a cancellable flash read while
-    // this future is racing other arms of an outer `select`.
-    if let Some(bond_info) = active_bond_info
-        && bond_info.info.identity.match_identity(&conn.raw().peer_identity())
-    {
-        info!("Loading CCCD table: {:?}", bond_info.cccd_table);
-        match ClientAttTableView::try_from_raw(&bond_info.cccd_table) {
-            Ok(view) => server.set_client_att_table(conn.raw(), &view),
-            Err(e) => warn!("Invalid stored CCCD table: {:?}", e),
-        }
-    }
 
     let host_phy = if cfg!(feature = "use_1m_phy") {
         PhyKind::Le1M
