@@ -318,12 +318,22 @@ async fn run_ble_keyboard<
                         disconnect(&conn).await;
                         continue;
                     }
+                    // Restore one-shot client state before constructing the
+                    // long-lived connection future, so ProfileInfo is not
+                    // retained for the whole session.
+                    if let Some(bond_info) = &active_bond_info {
+                        info!("Loading CCCD table: {:?}", bond_info.cccd_table);
+                        match ClientAttTableView::try_from_raw(&bond_info.cccd_table) {
+                            Ok(view) => server.set_client_att_table(conn.raw(), &view),
+                            Err(e) => warn!("Invalid stored CCCD table: {:?}", e),
+                        }
+                    }
+                    drop(active_bond_info);
                     if let Either::Second(_) = select(
                         serve_keyboard_connection(
                             server,
                             &conn,
                             stack,
-                            active_bond_info,
                             config,
                             #[cfg(feature = "host")]
                             host_service,
@@ -776,7 +786,6 @@ async fn serve_keyboard_connection<
     server: &'b Server<'_>,
     conn: &GattConnection<'a, 'b, DefaultPacketPool>,
     stack: &Stack<'_, C, DefaultPacketPool>,
-    active_bond_info: Option<crate::ble::profile::ProfileInfo>,
     config: &BleBatteryConfig<'a>,
     #[cfg(feature = "host")] host_service: Option<&'r crate::host::HostService<'r>>,
 ) {
@@ -787,18 +796,6 @@ async fn serve_keyboard_connection<
     let mut ble_peripheral_battery_server = crate::SPLIT_BATTERY_PERIPHERAL_IDS
         .first()
         .map(|_| BlePeripheralBatteryServer::new(server, conn));
-
-    // CCCD lookup uses cached bond info to avoid a cancellable flash read while
-    // this future is racing other arms of an outer `select`.
-    if let Some(bond_info) = active_bond_info
-        && bond_info.info.identity.match_identity(&conn.raw().peer_identity())
-    {
-        info!("Loading CCCD table: {:?}", bond_info.cccd_table);
-        match ClientAttTableView::try_from_raw(&bond_info.cccd_table) {
-            Ok(view) => server.set_client_att_table(conn.raw(), &view),
-            Err(e) => warn!("Invalid stored CCCD table: {:?}", e),
-        }
-    }
 
     // `use_1m_phy` exists for legacy host adapters that cannot do 2M.
     // Always use 2M for the dongle link.
