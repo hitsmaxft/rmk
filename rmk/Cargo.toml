@@ -170,6 +170,9 @@ compact-no-combos = []
 ## Peripheral-only BLE implementations. The built-in Trouble backend remains
 ## unchanged unless this is selected by a platform crate.
 external-ble-backend = ["_ble"]
+## Report one Vial macro slot for constrained products that deliberately keep
+## a single compact macro buffer. The default host capability remains intact.
+compact-vial-one-macro = []
 
 ## Enable DFU lock feature — physical key unlock for DFU firmware download
 dfu_lock = ["host_lock"]

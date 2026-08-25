@@ -148,8 +148,15 @@ impl<'a> VialService<'a> {
                 boot::jump_to_bootloader();
             }
             ViaCommand::DynamicKeymapMacroGetCount => {
-                report.input_data[1] = 32;
-                warn!("Macro get count -- to be implemented")
+                #[cfg(feature = "compact-vial-one-macro")]
+                {
+                    report.input_data[1] = 1;
+                }
+                #[cfg(not(feature = "compact-vial-one-macro"))]
+                {
+                    report.input_data[1] = 32;
+                    warn!("Macro get count -- to be implemented");
+                }
             }
             ViaCommand::DynamicKeymapMacroGetBufferSize => {
                 report.input_data[1] = (MACRO_SPACE_SIZE as u16 >> 8) as u8;
