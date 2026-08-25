@@ -126,6 +126,32 @@ host = ["dep:byteorder"]
 ## Enable vial support
 vial = ["host"]
 
+## Compact AttributeTable metadata for products whose GATT database uses only
+## Bluetooth 16-bit UUIDs. The Trouble constructor rejects wider UUIDs.
+compact-gatt-uuid16 = ["trouble-host?/gatt-uuid16-only"]
+compact-gatt-storage = ["trouble-host?/gatt-small-data-8"]
+compact-security-rng = ["trouble-host?/security-compact-rng"]
+compact-ble-fixed-channels-only = []
+compact-ble-essential-services = []
+compact-ble-hci-rx-64 = ["trouble-host?/hci-rx-buffer-64"]
+compact-ble-static-address = ["trouble-host?/security-no-address-privacy"]
+compact-ble-queues = [
+    "trouble-host?/connection-event-queue-size-1",
+    # Peripheral Secure Connections may enqueue Public Key and Pairing
+    # Confirm before the first packet is drained.
+    "trouble-host?/l2cap-tx-queue-size-2",
+]
+compact-ble-central-owned-conn-params = []
+compact-ble-profile-dispatch = []
+compact-ble-keyboard-mouse-hids = []
+compact-ble-client-att-32 = ["trouble-host?/client-att-table-size-32"]
+compact-ble-client-att-24 = ["trouble-host?/client-att-table-size-24"]
+compact-no-combos = []
+
+## Expose stack-independent reports, bond persistence, and transport hooks for
+## constrained platform-owned Peripheral implementations.
+external-ble-backend = ["_ble"]
+
 ## **Experimental.** Enable DFU lock feature — physical key unlock for DFU firmware download
 dfu_lock = ["host_lock"]
 

@@ -248,6 +248,21 @@ impl<'a> VialService<'a> {
 }
 
 impl VialService<'_> {
+    /// Process one 32-byte Vial request in place.
+    ///
+    /// Platform BLE backends use this when their GATT layer already owns a
+    /// single in-flight report slot. It avoids the additional BLE RX channel
+    /// and transport reader/writer Futures used by the generic Trouble path.
+    #[doc(hidden)]
+    pub async fn process_packet_in_place(&self, packet: &mut [u8; 32]) {
+        let mut report = ViaReport {
+            input_data: *packet,
+            output_data: *packet,
+        };
+        self.process_via_packet(&mut report).await;
+        *packet = report.input_data;
+    }
+
     /// Drive one Vial session against `rx`/`tx` (32-byte request → 32-byte
     /// response, processed in place). Returns on any read/write error;
     /// transport-specific reconnect lives in the caller.

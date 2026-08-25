@@ -50,6 +50,20 @@ static PEER_ADDRESS_RESPONSE: Signal<crate::RawMutex, Option<PeerAddress>> = Sig
 static CONNECTION_TYPE_RESPONSE: Signal<crate::RawMutex, Option<ConnectionType>> = Signal::new();
 #[cfg(feature = "_ble")]
 static ACTIVE_BLE_PROFILE_RESPONSE: Signal<crate::RawMutex, Option<u8>> = Signal::new();
+#[cfg(feature = "external-ble-backend")]
+static EXTERNAL_BLE_BOND_RESPONSE: Signal<crate::RawMutex, Option<ExternalBleBond>> = Signal::new();
+
+/// Stack-independent one-profile bond used by compact platform BLE backends.
+#[cfg(feature = "external-ble-backend")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ExternalBleBond {
+    pub removed: bool,
+    pub ltk: [u8; 16],
+    pub rand: [u8; 8],
+    pub ediv: u16,
+    pub cccd: [u16; 3],
+}
 
 #[cfg(feature = "_ble")]
 async fn request_read<T: Send>(msg: FlashOperationMessage, response: &Signal<crate::RawMutex, T>) -> T {
@@ -82,6 +96,31 @@ pub(crate) async fn read_active_ble_profile() -> Option<u8> {
     .await
 }
 
+#[cfg(feature = "external-ble-backend")]
+pub async fn read_external_ble_bond() -> Option<ExternalBleBond> {
+    request_read(FlashOperationMessage::ReadExternalBleBond, &EXTERNAL_BLE_BOND_RESPONSE)
+        .await
+        .filter(|bond| !bond.removed)
+}
+
+#[cfg(feature = "external-ble-backend")]
+pub async fn write_external_ble_bond(bond: ExternalBleBond) -> bool {
+    FLASH_CHANNEL.send(FlashOperationMessage::ExternalBleBond(bond)).await;
+    flush().await
+}
+
+#[cfg(feature = "external-ble-backend")]
+pub async fn clear_external_ble_bond() -> bool {
+    write_external_ble_bond(ExternalBleBond {
+        removed: true,
+        ltk: [0; 16],
+        rand: [0; 8],
+        ediv: 0,
+        cccd: [0; 3],
+    })
+    .await
+}
+
 /// Persist a peer address and wait for it to land.
 /// Returns `true` if the write completed successfully.
 #[cfg(all(feature = "_ble", feature = "split"))]
@@ -95,6 +134,8 @@ pub(crate) async fn write_peer_address(addr: PeerAddress) -> bool {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum FlashOperationMessage {
+    #[cfg(feature = "external-ble-backend")]
+    ExternalBleBond(ExternalBleBond),
     #[cfg(feature = "_ble")]
     // BLE profile info to be saved
     ProfileInfo(ProfileInfo),
@@ -175,6 +216,8 @@ pub(crate) enum FlashOperationMessage {
     #[cfg(feature = "_ble")]
     // Read the persisted active BLE profile number; storage task replies via `ACTIVE_BLE_PROFILE_RESPONSE`.
     ReadActiveBleProfile,
+    #[cfg(feature = "external-ble-backend")]
+    ReadExternalBleBond,
     // Barrier: storage task replies via `FLUSHED` once every earlier message is processed.
     Flush,
 }
@@ -211,6 +254,8 @@ pub(crate) enum StorageKey {
     ActiveBleProfile,
     #[cfg(feature = "_ble")]
     BondInfo(u8),
+    #[cfg(feature = "external-ble-backend")]
+    ExternalBleBond,
 }
 
 impl StorageKey {
@@ -292,6 +337,8 @@ pub(crate) enum StorageData {
     BondInfo(ProfileInfo),
     #[cfg(feature = "_ble")]
     ActiveBleProfile(u8),
+    #[cfg(feature = "external-ble-backend")]
+    ExternalBleBond(ExternalBleBond),
 }
 
 impl<'a> PostcardValue<'a> for StorageData {}
@@ -714,6 +761,15 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                     ACTIVE_BLE_PROFILE_RESPONSE.signal(resp);
                     continue;
                 }
+                #[cfg(feature = "external-ble-backend")]
+                FlashOperationMessage::ReadExternalBleBond => {
+                    let resp = match self.fetch_data(StorageKey::ExternalBleBond).await {
+                        Some(StorageData::ExternalBleBond(bond)) => Some(bond),
+                        _ => None,
+                    };
+                    EXTERNAL_BLE_BOND_RESPONSE.signal(resp);
+                    continue;
+                }
 
                 FlashOperationMessage::LayoutOptions(layout_option) => {
                     update_storage_field!(&mut self.flash, &mut self.buffer, LayoutConfig, layout_option)
@@ -766,6 +822,11 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                 }
                 FlashOperationMessage::ConnectionType(ty) => {
                     self.store_data(StorageKey::ConnectionType, &StorageData::ConnectionType(ty))
+                        .await
+                }
+                #[cfg(feature = "external-ble-backend")]
+                FlashOperationMessage::ExternalBleBond(bond) => {
+                    self.store_data(StorageKey::ExternalBleBond, &StorageData::ExternalBleBond(bond))
                         .await
                 }
                 #[cfg(all(feature = "_ble", feature = "split"))]
@@ -1010,6 +1071,8 @@ mod tests {
             StorageKey::ActiveBleProfile,
             #[cfg(feature = "_ble")]
             StorageKey::BondInfo(0),
+            #[cfg(feature = "external-ble-backend")]
+            StorageKey::ExternalBleBond,
         ];
 
         let mut buffer = [0u8; 64];
@@ -1051,6 +1114,23 @@ mod tests {
         assert!(matches!(FLASH_CHANNEL.try_receive(), Ok(FlashOperationMessage::Flush)));
         FLUSHED.signal(true);
         assert!(matches!(write.as_mut().poll(&mut cx), Poll::Ready(true)));
+    }
+
+    #[cfg(feature = "external-ble-backend")]
+    #[test]
+    fn external_ble_bond_round_trip_preserves_key_material_and_cccd() {
+        let bond = ExternalBleBond {
+            removed: false,
+            ltk: [0x11; 16],
+            rand: [0x22; 8],
+            ediv: 0x3344,
+            cccd: [1, 0, 1],
+        };
+        let data = StorageData::ExternalBleBond(bond);
+        let mut buffer = [0u8; 64];
+        let encoded = postcard::to_slice(&data, &mut buffer).unwrap();
+        let decoded: StorageData = postcard::from_bytes(encoded).unwrap();
+        assert!(matches!(decoded, StorageData::ExternalBleBond(found) if found == bond));
     }
 
     #[test]

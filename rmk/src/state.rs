@@ -79,7 +79,12 @@ pub fn set_usb_state(s: UsbState) {
     update_status(|c| c.usb = s);
 }
 
-pub(crate) fn set_ble_state(s: BleState) {
+/// Update BLE transport state.
+///
+/// Public so memory-constrained platform backends can reuse RMK's transport
+/// routing without depending on the built-in Trouble Host implementation.
+#[doc(hidden)]
+pub fn set_ble_state(s: BleState) {
     update_status(|c| c.ble.state = s);
 }
 
@@ -115,6 +120,15 @@ pub(crate) async fn load_preferred_connection() -> ConnectionType {
         #[cfg(not(feature = "_no_usb"))]
         None => ConnectionType::Usb,
     }
+}
+
+/// Restore the persisted preferred transport before an external BLE backend
+/// begins advertising.
+#[cfg(feature = "_ble")]
+#[doc(hidden)]
+pub async fn initialize_external_ble_transport() {
+    let preferred = load_preferred_connection().await;
+    set_preferred_connection(preferred);
 }
 
 #[cfg(all(feature = "_ble", not(feature = "_no_usb")))]

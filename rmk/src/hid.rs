@@ -309,6 +309,71 @@ pub struct BleCompositeReport {
     pub(crate) system_usage_id: u8,
 }
 
+/// BLE report map for products that expose only keyboard and mouse input.
+#[cfg(all(feature = "_ble", feature = "compact-ble-keyboard-mouse-hids"))]
+#[gen_hid_descriptor(
+    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = KEYBOARD) = {
+        (report_id = 0x01,) = {
+            (usage_page = KEYBOARD, usage_min = 0xE0, usage_max = 0xE7) = {
+                #[packed_bits = 8] #[item_settings(data,variable,absolute)] modifier=input;
+            };
+            (logical_min = 0,) = {
+                #[item_settings(constant,variable,absolute)] reserved=input;
+            };
+            (usage_page = LEDS, usage_min = 0x01, usage_max = 0x05) = {
+                #[packed_bits = 5] #[item_settings(data,variable,absolute)] leds=output;
+            };
+            (usage_page = KEYBOARD, usage_min = 0x00, usage_max = 0xDD) = {
+                #[item_settings(data,array,absolute)] keycodes=input;
+            };
+        };
+    },
+    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = MOUSE) = {
+        (collection = PHYSICAL, usage = POINTER) = {
+            (report_id = 0x02,) = {
+                (usage_page = BUTTON, usage_min = BUTTON_1, usage_max = BUTTON_8) = {
+                    #[packed_bits = 8] #[item_settings(data,variable,absolute)] buttons=input;
+                };
+                (usage_page = GENERIC_DESKTOP,) = {
+                    (usage = X,) = { #[item_settings(data,variable,relative)] x=input; };
+                    (usage = Y,) = { #[item_settings(data,variable,relative)] y=input; };
+                    (usage = WHEEL,) = { #[item_settings(data,variable,relative)] wheel=input; };
+                };
+                (usage_page = CONSUMER,) = {
+                    (usage = AC_PAN,) = { #[item_settings(data,variable,relative)] pan=input; };
+                };
+            };
+        };
+    }
+)]
+#[allow(dead_code)]
+#[derive(Default)]
+pub struct BleKeyboardMouseReport {
+    pub(crate) modifier: u8,
+    pub(crate) reserved: u8,
+    pub(crate) leds: u8,
+    pub(crate) keycodes: [u8; 6],
+    pub(crate) buttons: u8,
+    pub(crate) x: i8,
+    pub(crate) y: i8,
+    pub(crate) wheel: i8,
+    pub(crate) pan: i8,
+}
+
+/// HID-over-GATT report map used by compact external BLE backends.
+#[cfg(all(feature = "_ble", feature = "compact-ble-keyboard-mouse-hids"))]
+#[doc(hidden)]
+pub fn compact_ble_keyboard_mouse_report_map() -> &'static [u8] {
+    BleKeyboardMouseReport::desc()
+}
+
+/// Vial's 32-byte vendor HID report map for external BLE backends.
+#[cfg(all(feature = "_ble", feature = "vial"))]
+#[doc(hidden)]
+pub fn vial_ble_report_map() -> &'static [u8] {
+    ViaReport::desc()
+}
+
 #[cfg(all(test, feature = "_ble"))]
 mod ble_report_map_tests {
     use usbd_hid::descriptor::SerializedDescriptor;
@@ -390,6 +455,16 @@ pub trait HidReaderTrait {
 
     /// Read HID report from the host
     fn read_report(&mut self) -> impl Future<Output = Result<Self::ReportType, HidError>>;
+}
+
+/// Apply one keyboard LED Output Report received by an external BLE backend.
+#[cfg(feature = "_ble")]
+#[doc(hidden)]
+pub fn apply_external_ble_led_report(led_indicator: LedIndicator) {
+    if crate::state::active_transport() == Some(ConnectionType::Ble) {
+        LOCK_LED_STATES.store(led_indicator.into_bits(), Ordering::Relaxed);
+        publish_event(LedIndicatorEvent::new(led_indicator));
+    }
 }
 
 /// Drain LED indicator OUT reports from `reader` and republish them as
