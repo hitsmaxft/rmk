@@ -166,6 +166,10 @@ compact-ble-client-att-24 = ["trouble-host?/client-att-table-size-24"]
 ## Remove combo-processing futures for products that declare zero combo slots.
 ## Vial macro support is independent and remains available.
 compact-no-combos = []
+## Expose one stack-agnostic bond record and backend hooks for constrained
+## Peripheral-only BLE implementations. The built-in Trouble backend remains
+## unchanged unless this is selected by a platform crate.
+external-ble-backend = ["_ble"]
 
 ## Enable DFU lock feature — physical key unlock for DFU firmware download
 dfu_lock = ["host_lock"]

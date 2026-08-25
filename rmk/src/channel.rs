@@ -107,6 +107,24 @@ pub async fn drain_flash_channel_for_test() {
 #[cfg(feature = "_ble")]
 pub(crate) static BLE_PROFILE_CHANNEL: Channel<RawMutex, BleProfileAction, 1> = Channel::new();
 
+/// Single-profile command surface for an external Peripheral-only BLE
+/// backend. A signal is sufficient because clearing the sole bond is
+/// idempotent and must not retain a generic profile-action queue.
+#[cfg(feature = "external-ble-backend")]
+static EXTERNAL_BLE_CLEAR_BOND: Signal<RawMutex, ()> = Signal::new();
+
+#[cfg(feature = "external-ble-backend")]
+#[doc(hidden)]
+pub fn request_external_ble_clear_bond() {
+    EXTERNAL_BLE_CLEAR_BOND.signal(());
+}
+
+#[cfg(feature = "external-ble-backend")]
+#[doc(hidden)]
+pub async fn wait_external_ble_clear_bond() {
+    EXTERNAL_BLE_CLEAR_BOND.wait().await;
+}
+
 /// Vial RX from BLE GATT `output_data` writes — one 32-byte chunk per write.
 /// Pushed by `gatt_events_task`, drained by [`crate::ble::host::HostGattHandler::run`].
 #[cfg(all(feature = "vial", feature = "_ble"))]

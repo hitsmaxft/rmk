@@ -1703,7 +1703,9 @@ impl<'a> Keyboard<'a> {
         #[cfg(feature = "_ble")]
         {
             use crate::NUM_BLE_PROFILE;
+            #[cfg(not(feature = "external-ble-backend"))]
             use crate::ble::profile::BleProfileAction;
+            #[cfg(not(feature = "external-ble-backend"))]
             use crate::channel::BLE_PROFILE_CHANNEL;
             if event.pressed {
                 // The uniform gesture across all bond slots: tap switches, a 5s
@@ -1711,8 +1713,13 @@ impl<'a> Keyboard<'a> {
                 // clears that profile and switches to it, so it advertises openly.
                 if id < NUM_BLE_PROFILE as u8 && self.held_for_5s().await {
                     info!("Profile key held: clearing bond on profile {}", id);
-                    BLE_PROFILE_CHANNEL.send(BleProfileAction::ClearSlot(id)).await;
-                    BLE_PROFILE_CHANNEL.send(BleProfileAction::Switch(id)).await;
+                    #[cfg(feature = "external-ble-backend")]
+                    crate::channel::request_external_ble_clear_bond();
+                    #[cfg(not(feature = "external-ble-backend"))]
+                    {
+                        BLE_PROFILE_CHANNEL.send(BleProfileAction::ClearSlot(id)).await;
+                        BLE_PROFILE_CHANNEL.send(BleProfileAction::Switch(id)).await;
+                    }
                 }
                 // A 5s hold of the dongle key clears the local dongle bond and goes
                 // seeking, which is how a keyboard moves to a different dongle.
@@ -1736,15 +1743,21 @@ impl<'a> Keyboard<'a> {
                 // fixed actions stacked on top.
                 if id < NUM_BLE_PROFILE as u8 {
                     info!("Switch to profile: {}", id);
+                    #[cfg(not(feature = "external-ble-backend"))]
                     BLE_PROFILE_CHANNEL.send(BleProfileAction::Switch(id)).await;
                 } else if id == NUM_BLE_PROFILE as u8 {
                     // Next profile
+                    #[cfg(not(feature = "external-ble-backend"))]
                     BLE_PROFILE_CHANNEL.send(BleProfileAction::Next).await;
                 } else if id == NUM_BLE_PROFILE as u8 + 1 {
                     // Previous profile
+                    #[cfg(not(feature = "external-ble-backend"))]
                     BLE_PROFILE_CHANNEL.send(BleProfileAction::Previous).await;
                 } else if id == NUM_BLE_PROFILE as u8 + 2 {
                     // Clear bond on current profile
+                    #[cfg(feature = "external-ble-backend")]
+                    crate::channel::request_external_ble_clear_bond();
+                    #[cfg(not(feature = "external-ble-backend"))]
                     BLE_PROFILE_CHANNEL.send(BleProfileAction::ClearBond).await;
                 } else if id == NUM_BLE_PROFILE as u8 + 3 {
                     // Toggle preferred transport (USB <-> BLE);

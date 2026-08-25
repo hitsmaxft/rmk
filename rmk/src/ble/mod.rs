@@ -27,10 +27,9 @@ use crate::ble::host::{HOST_WRITE_BUFFER_SIZE, HostGattHandler, HostWriteOutcome
 use crate::ble::led::BleLedReader;
 #[cfg(feature = "passkey_entry")]
 use crate::ble::passkey::{PasskeyInputState, next_gatt_event};
-use crate::ble::profile::{
-    BOND_SLOTS, ProfileInfo, ProfileManager, ProfileUpdateOutcome, UPDATED_CCCD_TABLE, UPDATED_PROFILE,
-    wait_profile_update,
-};
+use crate::ble::profile::{BOND_SLOTS, ProfileInfo, ProfileManager, UPDATED_CCCD_TABLE, UPDATED_PROFILE};
+#[cfg(feature = "compact-ble-profile-dispatch")]
+use crate::ble::profile::{ProfileUpdateOutcome, wait_profile_update};
 use crate::ble::sleep::{report_activity, request_sleep};
 use crate::channel::{BLE_REPORT_CHANNEL, LED_SIGNAL};
 #[cfg(not(feature = "compact-ble-essential-services"))]

@@ -368,6 +368,20 @@ pub struct BleKeyboardMouseReport {
     pub(crate) pan: i8,
 }
 
+/// HID-over-GATT report map used by the compact keyboard/mouse profile.
+#[cfg(all(feature = "_ble", feature = "compact-ble-keyboard-mouse-hids"))]
+#[doc(hidden)]
+pub fn compact_ble_keyboard_mouse_report_map() -> &'static [u8] {
+    BleKeyboardMouseReport::desc()
+}
+
+/// Vial's 32-byte vendor HID report map for external BLE backends.
+#[cfg(all(feature = "_ble", feature = "vial"))]
+#[doc(hidden)]
+pub fn vial_ble_report_map() -> &'static [u8] {
+    ViaReport::desc()
+}
+
 #[cfg(all(test, feature = "_ble"))]
 mod ble_report_map_tests {
     use usbd_hid::descriptor::SerializedDescriptor;
@@ -461,6 +475,20 @@ pub trait HidReaderTrait {
 
     /// Read HID report from the host
     fn read_report(&mut self) -> impl Future<Output = Result<Self::ReportType, HidError>>;
+}
+
+/// Apply one keyboard LED Output Report received by a platform BLE backend.
+///
+/// The built-in Trouble path reaches the same state through `run_led_reader`;
+/// this one-shot form avoids retaining a reader Future in small Peripheral-
+/// only products.
+#[cfg(feature = "_ble")]
+#[doc(hidden)]
+pub fn apply_external_ble_led_report(led_indicator: LedIndicator) {
+    if crate::state::active_transport() == Some(ConnectionType::Ble) {
+        LOCK_LED_STATES.store(led_indicator.into_bits(), Ordering::Relaxed);
+        publish_event(LedIndicatorEvent::new(led_indicator));
+    }
 }
 
 /// Drain LED indicator OUT reports from `reader` and republish them as
