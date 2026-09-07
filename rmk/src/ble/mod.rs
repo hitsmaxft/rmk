@@ -413,11 +413,10 @@ pub(crate) async fn wait_for_stack_started() {
 /// This is a background task that is required to run forever alongside any other BLE tasks.
 pub(crate) async fn ble_task<C: Controller, P: PacketPool, E: EventHandler>(mut runner: Runner<'_, C, P>, handler: &E) {
     STACK_STARTED.signal(());
-    loop {
-        if let Err(e) = runner.run_with_handler(handler).await {
-            error!("[ble_task] runner error: {:?}", e);
-            Timer::after_millis(100).await;
-        }
+    if let Err(e) = runner.run_with_handler(handler).await {
+        error!("[ble_task] runner stopped, rebooting: {:?}", e);
+        Timer::after_millis(100).await;
+        crate::boot::reboot_keyboard();
     }
 }
 
