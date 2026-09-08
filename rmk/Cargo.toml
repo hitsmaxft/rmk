@@ -57,7 +57,7 @@ display-interface-i2c = { version = "0.5", optional = true }
 
 # Optional dependencies
 # BLE dependencies
-trouble-host = { git = "https://github.com/hitsmaxft/trouble.git", rev = "99e152659c300422348e66d5c20db308e5a7ec05", default-features = false, features = [
+trouble-host = { git = "https://github.com/hitsmaxft/trouble.git", rev = "9cf65f3b914f9a5332da6f2a69d15f0bace23743", default-features = false, features = [
     "peripheral",
     "gatt",
     "derive",
