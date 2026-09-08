@@ -5,6 +5,7 @@ use rmk_config::resolved::hardware::{
     BoardConfig, ChipSeries, KeyInfo, MatrixConfig, MatrixType, UniBodyConfig,
 };
 use rmk_config::resolved::{Behavior, Hardware, Host, Identity, Keymap, Layout};
+use rmk_types::ble::{BLE_ADV_NAME_MAX_LEN, BLE_DIS_STRING_MAX_LEN};
 
 use super::behavior::expand_behavior_config;
 use super::chip::bind_interrupt::expand_bind_interrupt;
@@ -64,6 +65,22 @@ pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
         host.rynk_enabled,
     )
     .unwrap_or_else(|err| panic!("{err}"));
+
+    // Over-budget strings would leave the keyboard undiscoverable or panic it on boot.
+    let name_len = identity.product_name.len();
+    let vendor_len = identity.manufacturer.len();
+    let serial_len = identity.serial_number.as_ref().map_or(0, String::len);
+    for (field, len, max) in [
+        ("product_name", name_len, BLE_ADV_NAME_MAX_LEN),
+        ("manufacturer", vendor_len, BLE_DIS_STRING_MAX_LEN),
+        ("serial_number", serial_len, BLE_DIS_STRING_MAX_LEN),
+    ] {
+        if hardware.communication.ble_enabled() && len > max {
+            let msg =
+                format!("keyboard.toml: `{field}` is {len} bytes, but BLE fits at most {max}.");
+            return quote! { compile_error!(#msg); };
+        }
+    }
 
     // Generate imports and statics
     let imports_and_statics =
