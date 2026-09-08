@@ -98,9 +98,10 @@ impl CapsWordState {
 
     /// Toggle Caps Word
     fn toggle(&mut self) {
-        match self {
-            CapsWordState::Activated { .. } => self.deactivate(),
-            CapsWordState::Deactivated => self.activate(),
+        if self.is_active() {
+            self.deactivate();
+        } else {
+            self.activate();
         }
     }
 
